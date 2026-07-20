@@ -1,7 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Plus, Trash, X } from "@phosphor-icons/react";
-import { WardrobeImportFlow } from "./import-flow.jsx";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check } from "@phosphor-icons/react/Check";
+import { ChartLine } from "@phosphor-icons/react/ChartLine";
+import { GearSix } from "@phosphor-icons/react/GearSix";
+import { Plus } from "@phosphor-icons/react/Plus";
+import { Sparkle } from "@phosphor-icons/react/Sparkle";
+import { SpinnerGap } from "@phosphor-icons/react/SpinnerGap";
+import { SignOut } from "@phosphor-icons/react/SignOut";
+import { TShirt } from "@phosphor-icons/react/TShirt";
+import { Trash } from "@phosphor-icons/react/Trash";
+import { Camera } from "@phosphor-icons/react/Camera";
+import { X } from "@phosphor-icons/react/X";
 import { OptimizedImage } from "./OptimizedImage.jsx";
+import { IMAGE_ACCEPT, isHeicFile, prepareImageFile } from "./image-files.mjs";
+
+const CameraCapture = lazy(() => import("./camera-capture.jsx").then((module) => ({ default: module.CameraCapture })));
+
+const WardrobeImportFlow = lazy(() => import("./import-flow.jsx").then((module) => ({ default: module.WardrobeImportFlow })));
+const OutfitPlanner = lazy(() => import("./outfit-planner.jsx").then((module) => ({ default: module.OutfitPlanner })));
 
 const STORAGE_KEY = "open-wardrobe-edits-v1";
 const DELETED_STORAGE_KEY = "open-wardrobe-deleted-v1";
@@ -17,6 +32,11 @@ const TYPES = [
 
 const TYPE_MAP = Object.fromEntries(TYPES.map((type) => [type.id, type]));
 const TYPE_ORDER = Object.fromEntries(TYPES.slice(1).map((type, index) => [type.id, index]));
+
+function usageValue(usage, period, kind, outcome = "requested") {
+  const value = usage?.[period]?.[kind];
+  return typeof value === "number" ? (outcome === "requested" ? value : 0) : Number(value?.[outcome] || 0);
+}
 
 
 function readEdits() {
@@ -153,7 +173,7 @@ function sampleImageColor(image, canvas, event) {
   return null;
 }
 
-function GalleryItem({ item, selected, onOpen }) {
+function GalleryItem({ item, selected, onOpen, index }) {
   const type = TYPE_MAP[item.part]?.singular || "wardrobe item";
 
   return (
@@ -165,12 +185,14 @@ function GalleryItem({ item, selected, onOpen }) {
       aria-pressed={selected}
       data-testid={`wardrobe-item-${item.id}`}
     >
-      <OptimizedImage
-        src={item.thumbnail || item.image}
-        alt=""
-        sizes="(max-width: 520px) calc(50vw - 16px), (max-width: 860px) calc(33vw - 18px), 180px"
-        breakpoints={[120, 180, 240, 320, 480]}
-      />
+      <span className="gallery-item__index" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
+      <span className="gallery-item__art"><OptimizedImage
+          src={item.thumbnail || item.image}
+          alt=""
+          sizes="(max-width: 520px) calc(50vw - 16px), (max-width: 860px) calc(33vw - 18px), 180px"
+          breakpoints={[120, 180, 240, 320, 480]}
+        /></span>
+      <span className="gallery-item__copy"><strong>{item.name || type}</strong><small>{TYPE_MAP[item.part]?.singular || type}</small></span>
     </button>
   );
 }
@@ -335,7 +357,169 @@ function ItemEditor({ draft, setDraft, palette, sampling, setSampling, sampleSta
   );
 }
 
-function ItemViewer({ item, onClose, onSave, onDelete }) {
+function ItemAppearanceStudio({ item, onOpenSettings }) {
+  const libraryRef = useRef(null);
+  const cameraRef = useRef(null);
+  const [records, setRecords] = useState([]);
+  const [referenceReady, setReferenceReady] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState("");
+  const [startedAt, setStartedAt] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const [notice, setNotice] = useState(null);
+
+  const loadStudio = useCallback(async () => {
+    try {
+      const [outfitsResponse, configResponse] = await Promise.all([
+        fetch("/api/outfits", { cache: "no-store" }),
+        fetch("/api/import/config", { cache: "no-store" }),
+      ]);
+      if (!outfitsResponse.ok || !configResponse.ok) throw new Error("Could not load your try-on studio.");
+      const [outfits, config] = await Promise.all([outfitsResponse.json(), configResponse.json()]);
+      setRecords(outfits.filter((record) => record.itemIds?.includes(item.id)));
+      setReferenceReady(Boolean(config.hasModelReference));
+      setNotice(null);
+    } catch (loadError) {
+      setNotice({ tone: "error", text: loadError.message });
+    } finally {
+      setLoading(false);
+    }
+  }, [item.id]);
+
+  useEffect(() => {
+    void loadStudio();
+    window.addEventListener("wardrobe:setup-refresh", loadStudio);
+    return () => window.removeEventListener("wardrobe:setup-refresh", loadStudio);
+  }, [loadStudio]);
+
+  useEffect(() => {
+    if (!busy) return undefined;
+    const update = () => setElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    update();
+    const timer = setInterval(update, 1_000);
+    return () => clearInterval(timer);
+  }, [busy, startedAt]);
+
+  const addResult = (record, text) => {
+    setRecords((current) => [record, ...current]);
+    setNotice({ tone: "success", text });
+  };
+
+  const generateWithAI = async () => {
+    if (referenceReady !== true || busy) return;
+    setBusy("ai");
+    setStartedAt(Date.now());
+    setElapsed(0);
+    setNotice({ tone: "progress", text: "Preparing your private reference and this exact garment…" });
+    try {
+      const response = await fetch("/api/outfits/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemIds: [item.id], name: `${item.name || "Wardrobe piece"} on me` }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "The AI try-on could not be created.");
+      addResult(body, "AI try-on finished and was saved privately.");
+      window.dispatchEvent(new Event("wardrobe:usage-refresh"));
+    } catch (generateError) {
+      setNotice({ tone: "error", text: generateError.message });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const uploadWearingPhoto = async (file) => {
+    if (!file || busy) return;
+    setBusy("photo");
+    setStartedAt(Date.now());
+    setElapsed(0);
+    setNotice({ tone: "progress", text: isHeicFile(file) ? "Converting your iPhone photo privately…" : "Saving your photo privately…" });
+    try {
+      const prepared = await prepareImageFile(file);
+      const response = await fetch(`/api/outfits/photos?itemId=${encodeURIComponent(item.id)}`, {
+        method: "POST",
+        headers: { "Content-Type": prepared.type },
+        body: prepared,
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "Your wearing photo could not be saved.");
+      addResult(body, "Your real photo was saved privately. No AI generation was used.");
+    } catch (uploadError) {
+      setNotice({ tone: "error", text: uploadError.message });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const removeResult = async (record) => {
+    if (!window.confirm(`Delete “${record.name}”?`)) return;
+    const response = await fetch(`/api/outfits/${record.id}`, { method: "DELETE" });
+    if (response.ok) setRecords((current) => current.filter((candidate) => candidate.id !== record.id));
+    else setNotice({ tone: "error", text: "That result could not be deleted." });
+  };
+
+  const elapsedLabel = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${String(elapsed % 60).padStart(2, "0")}s`;
+
+  return (
+    <section className="appearance-studio" aria-labelledby={`appearance-${item.id}`} aria-busy={Boolean(busy)}>
+      <div className="appearance-studio__heading">
+        <div>
+          <p>On you</p>
+          <h3 id={`appearance-${item.id}`}>See it worn, your way.</h3>
+        </div>
+        {loading && <SpinnerGap className="wardrobe-state__spinner" size={18} aria-label="Loading try-ons" />}
+      </div>
+
+      <div className="appearance-choices">
+        <article className="appearance-choice appearance-choice--ai">
+          <span className="appearance-choice__number">01</span>
+          <Sparkle size={22} weight="fill" aria-hidden="true" />
+          <div><strong>Try with AI</strong><p>Uses your saved reference photo and this garment.</p></div>
+          {referenceReady === false ? (
+            <button type="button" onClick={onOpenSettings}>Add reference photo</button>
+          ) : (
+            <button type="button" onClick={generateWithAI} disabled={referenceReady !== true || Boolean(busy)}>
+              {busy === "ai" ? <><SpinnerGap className="wardrobe-state__spinner" size={15} /> Generating · {elapsedLabel}</> : "Create AI try-on"}
+            </button>
+          )}
+        </article>
+
+        <article className="appearance-choice appearance-choice--photo">
+          <span className="appearance-choice__number">02</span>
+          <Camera size={22} weight="bold" aria-hidden="true" />
+          <div><strong>Add my real photo</strong><p>Photograph yourself wearing it. No AI or OpenAI cost.</p></div>
+          <div className="appearance-choice__photo-actions">
+            <button type="button" onClick={() => cameraRef.current?.click()} disabled={Boolean(busy)}>Take photo</button>
+            <button type="button" onClick={() => libraryRef.current?.click()} disabled={Boolean(busy)}>Choose photo</button>
+          </div>
+        </article>
+      </div>
+
+      {busy === "photo" && <p className="appearance-notice" data-tone="progress"><SpinnerGap className="wardrobe-state__spinner" size={14} /> Saving photo · {elapsedLabel}</p>}
+      {notice && <p className="appearance-notice" data-tone={notice.tone} role={notice.tone === "error" ? "alert" : "status"}>{notice.text}</p>}
+
+      {!!records.length && (
+        <div className="appearance-history">
+          <div className="appearance-history__heading"><strong>Your looks</strong><span>{records.length} saved</span></div>
+          <div className="appearance-history__rail">
+            {records.map((record) => (
+              <figure key={record.id}>
+                <img src={record.image} alt={`${record.name}, ${record.source === "ai" ? "AI try-on" : "your real photo"}`} />
+                <figcaption><span>{record.source === "ai" ? "AI try-on" : "My photo"}</span><time>{new Date(record.createdAt).toLocaleDateString()}</time></figcaption>
+                <button type="button" onClick={() => removeResult(record)} aria-label={`Delete ${record.name}`}><Trash size={14} /></button>
+              </figure>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <input ref={libraryRef} type="file" accept={IMAGE_ACCEPT} hidden onChange={(event) => { void uploadWearingPhoto(event.target.files?.[0]); event.target.value = ""; }} />
+      <input ref={cameraRef} type="file" accept="image/*" capture="user" hidden onChange={(event) => { void uploadWearingPhoto(event.target.files?.[0]); event.target.value = ""; }} />
+    </section>
+  );
+}
+
+function ItemViewer({ item, onClose, onSave, onDelete, onDeleteModeled, onOpenSettings }) {
   const closeButtonRef = useRef(null);
   const imageRef = useRef(null);
   const samplingCanvasRef = useRef(null);
@@ -504,27 +688,37 @@ function ItemViewer({ item, onClose, onSave, onDelete }) {
       )}
 
       <div className="viewer-details editing">
-        <ItemEditor
-          draft={draft}
-          setDraft={setDraft}
-          palette={palette}
-          sampling={sampling}
-          setSampling={setSampling}
-          sampleStatus={sampleStatus}
-        />
+        <ItemAppearanceStudio item={item} onOpenSettings={onOpenSettings} />
 
-        {closeBlocked && <p className="unsaved-notice" role="status">Save or cancel changes before closing.</p>}
+        <details className="piece-editor" open={isDirty || closeBlocked}>
+          <summary><span>Edit piece details</span><small>Name, category, colors and tags</small></summary>
+          <div className="piece-editor__body">
+            <ItemEditor
+              draft={draft}
+              setDraft={setDraft}
+              palette={palette}
+              sampling={sampling}
+              setSampling={setSampling}
+              sampleStatus={sampleStatus}
+            />
 
-        <div className="viewer-actions">
-          <button className="delete-button" type="button" onClick={() => onDelete(item.id)}>
-            <Trash size={15} weight="regular" aria-hidden="true" /> Delete
-          </button>
-          <span className="action-spacer" />
-          <button className="secondary-button" type="button" onClick={cancelEditing}>Cancel</button>
-          <button className="primary-button" type="button" onClick={saveEditing}>
-            <Check size={15} weight="bold" aria-hidden="true" /> Save
-          </button>
-        </div>
+            {closeBlocked && <p className="unsaved-notice" role="status">Save or cancel changes before closing.</p>}
+
+            <div className="viewer-actions">
+              <button className="delete-button" type="button" onClick={() => onDelete(item.id)}>
+                <Trash size={15} weight="regular" aria-hidden="true" /> Delete piece
+              </button>
+              {hasModeledImage && <button className="delete-button" type="button" onClick={() => onDeleteModeled(item.id)}>
+                <Trash size={15} weight="regular" aria-hidden="true" /> Old modeled photo
+              </button>}
+              <span className="action-spacer" />
+              <button className="secondary-button" type="button" onClick={cancelEditing}>Cancel</button>
+              <button className="primary-button" type="button" onClick={saveEditing}>
+                <Check size={15} weight="bold" aria-hidden="true" /> Save changes
+              </button>
+            </div>
+          </div>
+        </details>
       </div>
     </aside>
     </div>
@@ -538,22 +732,81 @@ export function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [outfitsOpen, setOutfitsOpen] = useState(false);
+  const [usage, setUsage] = useState(null);
+  const [referenceConfigured, setReferenceConfigured] = useState(null);
+  const [settingsNotice, setSettingsNotice] = useState(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   useEffect(() => {
-    fetch("/api/import/wardrobe", { cache: "no-store" })
-      .then((response) => {
+    let cancelled = false;
+    let timer;
+    let attempt = 0;
+    const load = async () => {
+      try {
+        const response = await fetch("/api/import/wardrobe", { cache: "no-store" });
         if (!response.ok) throw new Error("Could not load the wardrobe.");
-        return response.json();
-      })
-      .then((loadedItems) => {
+        const loadedItems = await response.json();
+        if (cancelled) return;
         const edits = readEdits();
         const deleted = readDeletedItems();
         const visibleItems = loadedItems.filter((item) => !deleted.has(item.id));
         setItems(visibleItems.map((item) => ({ ...item, ...(edits[item.id] || {}) })));
-      })
-      .catch((requestError) => setError(requestError.message))
-      .finally(() => setLoading(false));
+        setError("");
+        setLoading(false);
+      } catch {
+        if (cancelled) return;
+        attempt += 1;
+        if (attempt < 5) timer = setTimeout(load, Math.min(5_000, 750 * (2 ** (attempt - 1))));
+        else { setError("Could not reach the wardrobe server. Your saved pieces are not lost."); setLoading(false); }
+      }
+    };
+    void load();
+    return () => { cancelled = true; clearTimeout(timer); };
   }, []);
+
+  const loadUsage = useCallback(() => {
+    fetch("/api/usage", { cache: "no-store" }).then((response) => response.ok ? response.json() : null).then((value) => { if (value) setUsage(value); }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadUsage();
+    window.addEventListener("wardrobe:usage-refresh", loadUsage);
+    return () => window.removeEventListener("wardrobe:usage-refresh", loadUsage);
+  }, [loadUsage]);
+
+  const logout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.replace("/auth/login");
+  };
+
+  const openImporter = () => window.dispatchEvent(new Event("wardrobe:add-clothes"));
+
+  const openSettings = () => {
+    setOutfitsOpen(false);
+    setSettingsOpen(true);
+    setSettingsNotice(null);
+    setReferenceConfigured(null);
+    loadUsage();
+    fetch("/api/import/config", { cache: "no-store" })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error()))
+      .then((setup) => setReferenceConfigured(Boolean(setup.hasModelReference)))
+      .catch(() => setSettingsNotice({ tone: "error", text: "Could not check the reference photo right now." }));
+  };
+
+  const retryWardrobe = () => {
+    setLoading(true); setError("");
+    fetch("/api/import/wardrobe", { cache: "no-store" })
+      .then((response) => { if (!response.ok) throw new Error(); return response.json(); })
+      .then((loadedItems) => {
+        const edits = readEdits();
+        const deleted = readDeletedItems();
+        setItems(loadedItems.filter((item) => !deleted.has(item.id)).map((item) => ({ ...item, ...(edits[item.id] || {}) })));
+      })
+      .catch(() => setError("Could not reach the wardrobe server. Try again in a moment."))
+      .finally(() => setLoading(false));
+  };
 
   const selectedItem = items.find((item) => item.id === selectedId) || null;
 
@@ -579,6 +832,7 @@ export function App() {
   };
 
   const deleteItem = async (id) => {
+    if (!window.confirm("Delete this wardrobe item and all of its stored images?")) return;
     if (id.startsWith("import-")) {
       try {
         const response = await fetch(`/api/import/wardrobe/${id}`, { method: "DELETE" });
@@ -603,12 +857,49 @@ export function App() {
     setItems((current) => current.map((item) => item.id === id ? { ...item, modeledImage } : item));
   }, []);
 
+  const deleteModeledImage = async (id) => {
+    if (!id.startsWith("import-") || !window.confirm("Delete only the modeled photo and keep the garment?")) return;
+    const response = await fetch(`/api/import/wardrobe/${id}/modeled`, { method: "DELETE" });
+    if (!response.ok) return setError("Could not delete the modeled photo.");
+    setItems((current) => current.map((item) => item.id === id ? { ...item, modeledImage: null } : item));
+  };
+
   return (
     <div className={`app-shell${selectedItem ? " has-selection" : ""}`}>
+      <header className="site-header">
+        <button className="site-brand" type="button" onClick={() => { setSelectedId(null); setOutfitsOpen(false); }}>
+          <strong>Noa's Wardrobe</strong><span>Private dressing archive</span>
+        </button>
+        <nav className="site-nav" aria-label="Main navigation">
+          <button className="active" type="button" onClick={() => { setSelectedId(null); setOutfitsOpen(false); }}>Wardrobe</button>
+          <button type="button" onClick={() => setOutfitsOpen(true)}>Outfits</button>
+          <button type="button" onClick={() => setOutfitsOpen(true)}>On me</button>
+        </nav>
+        <div className="site-actions">
+          <button className="site-add" type="button" onClick={openImporter}><Plus size={17} weight="bold" /> Add clothes</button>
+          <button type="button" onClick={openSettings} aria-label="Settings"><GearSix size={19} /></button>
+          <button type="button" onClick={logout} aria-label="Log out"><SignOut size={19} /></button>
+        </div>
+      </header>
       <main className="gallery-pane">
         <header className="gallery-header">
+          <div className="collection-rule"><span>Collection / 01</span><span>Private &amp; server-stored</span></div>
           <div className="gallery-meta-row">
-            <p className="piece-count">{items.length} {items.length === 1 ? "piece" : "pieces"}</p>
+            <div>
+              <p className="private-label">Wardrobe index</p>
+              <h1 className="wardrobe-title">The everyday archive.</h1>
+              <p className="wardrobe-intro">Upload the pieces you actually own, build combinations, then see the chosen look on you.</p>
+            </div>
+            <div className="collection-count" aria-label={`${items.length} wardrobe pieces`}>
+              <strong>{String(items.length).padStart(2, "0")}</strong>
+              <span>{items.length === 1 ? "piece" : "pieces"}<br />catalogued</span>
+            </div>
+          </div>
+          <div className="wardrobe-actions" aria-label="Wardrobe actions">
+            <button className="wardrobe-action wardrobe-action--primary" type="button" onClick={openImporter}><Plus size={17} weight="bold" /> Add clothes</button>
+            <button className="wardrobe-action" type="button" onClick={() => setOutfitsOpen(true)}><Sparkle size={17} /> Plan outfits</button>
+            <p><strong>You can select several photos at once.</strong> Each detected item waits for your review before it is added.</p>
+            {usage && <span className="usage-pill" title={usage.note}><ChartLine size={15} /> {usageValue(usage, "today", "images")}{usage.dailyImageLimit > 0 ? `/${usage.dailyImageLimit}` : ""} AI images today</span>}
           </div>
           <nav className="category-nav" aria-label="Filter wardrobe by item type">
             {TYPES.map((type) => (
@@ -625,16 +916,17 @@ export function App() {
           </nav>
         </header>
 
-        {error && <p className="status error">{error}</p>}
-        {!error && loading && <p className="status">Loading wardrobe</p>}
-        {!error && !loading && !items.length && <p className="status empty">Drop, paste, or add a photo to import your first piece.</p>}
+        {error && <div className="wardrobe-state wardrobe-state--error"><h2>Wardrobe temporarily unavailable</h2><p>{error}</p><button onClick={retryWardrobe}>Try again</button></div>}
+        {!error && loading && <div className="wardrobe-state"><SpinnerGap className="wardrobe-state__spinner" size={22} /><h2>Loading your wardrobe</h2><p>Reconnecting automatically if the local server is restarting.</p></div>}
+        {!error && !loading && !items.length && <div className="wardrobe-state wardrobe-state--empty"><TShirt size={30} /><h2>Your wardrobe is ready</h2><p>Add one or several clothing photos. You will approve each piece before it is saved.</p><button onClick={openImporter}><Plus size={16} /> Add your first clothes</button></div>}
 
         {!!items.length && (
           <section className="gallery-grid" aria-label={`${TYPE_MAP[activeType]?.label || "All"} wardrobe items`}>
-            {visibleItems.map((item) => (
+            {visibleItems.map((item, index) => (
               <GalleryItem
                 key={item.id}
                 item={item}
+                index={index}
                 selected={selectedId === item.id}
                 onOpen={setSelectedId}
               />
@@ -643,8 +935,65 @@ export function App() {
         )}
       </main>
 
-      {selectedItem && <ItemViewer item={selectedItem} onClose={() => setSelectedId(null)} onSave={saveItem} onDelete={deleteItem} />}
-      <WardrobeImportFlow onGarmentApproved={addImportedItem} onModeledApproved={attachImportedModeledImage} />
+      {selectedItem && <ItemViewer item={selectedItem} onClose={() => setSelectedId(null)} onSave={saveItem} onDelete={deleteItem} onDeleteModeled={deleteModeledImage} onOpenSettings={openSettings} />}
+      <Suspense fallback={null}>
+        <WardrobeImportFlow onGarmentApproved={addImportedItem} onModeledApproved={attachImportedModeledImage} />
+      </Suspense>
+      {outfitsOpen && <Suspense fallback={null}><OutfitPlanner items={items} usage={usage} onClose={() => setOutfitsOpen(false)} onOpenSettings={openSettings} /></Suspense>}
+      {settingsOpen && (
+        <div className="settings-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSettingsOpen(false)}>
+          <section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+            <div className="settings-heading"><div><p className="private-label">Owner controls</p><h2 id="settings-title">Privacy & data</h2></div><button className="viewer-icon-close" onClick={() => setSettingsOpen(false)} aria-label="Close settings"><X size={20} /></button></div>
+            <p>Your images are stored in your private storage. Images required for analysis or generation are sent to the OpenAI API. This single-user application has no analytics, ads, or tracking.</p>
+            <div className="settings-card"><h3>API usage estimate</h3><p>Today · analysis: {usageValue(usage, "today", "analysis")} requested, {usageValue(usage, "today", "analysis", "succeeded")} succeeded, {usageValue(usage, "today", "analysis", "failed")} failed.</p><p>Today · images: {usageValue(usage, "today", "images")} requested, {usageValue(usage, "today", "images", "succeeded")} succeeded, {usageValue(usage, "today", "images", "failed")} failed.</p><p>App generation limit: {usage?.dailyImageLimit > 0 ? `${usage.dailyImageLimit} requested generations per day` : "unlimited"}. Change <code>DAILY_IMAGE_GENERATION_LIMIT</code> in the server environment and restart the app.</p><p>This month · images: {usageValue(usage, "monthly", "images")} requested, {usageValue(usage, "monthly", "images", "succeeded")} succeeded, {usageValue(usage, "monthly", "images", "failed")} failed. OpenAI Billing is the final source of actual spend.</p></div>
+            <div className="settings-card"><div className="settings-card__title"><h3>Reference photograph</h3><span data-ready={referenceConfigured === true}>{referenceConfigured === null ? "Checking…" : referenceConfigured ? "Ready for try-on" : "Not added"}</span></div><p>The reference image is used only for an outfit try-on and is never served back to the browser after upload.</p><label className="reference-upload">Upload or replace photo<input type="file" accept={IMAGE_ACCEPT} onChange={async (event) => {
+              const file = event.target.files?.[0]; if (!file) return;
+              try {
+                setSettingsNotice({ tone: "progress", text: isHeicFile(file) ? "Converting HEIC privately in your browser…" : "Saving the private reference photo…" });
+                const prepared = await prepareImageFile(file);
+                const response = await fetch("/api/settings/model-reference", { method: "PUT", headers: { "Content-Type": prepared.type }, body: prepared });
+                if (!response.ok) throw new Error("Could not store the reference photo. Use PNG, JPEG, WebP, HEIC or HEIF under the upload limit.");
+                setReferenceConfigured(true); setSettingsNotice({ tone: "success", text: "Reference photo saved. Outfit try-on is ready." }); window.dispatchEvent(new Event("wardrobe:setup-refresh"));
+              } catch (uploadError) {
+                setSettingsNotice({ tone: "error", text: uploadError.message });
+              } finally {
+                event.target.value = "";
+              }
+            }} /></label>
+            <button className="reference-camera-button" type="button" onClick={() => setCameraOpen(true)}><Camera size={15} weight="bold" /> Take a photo of yourself</button>
+            <button className="delete-button" type="button" onClick={async () => {
+              if (!window.confirm("Delete the private model reference photo?")) return;
+              const response = await fetch("/api/settings/model-reference", { method: "DELETE" });
+              if (response.ok) { setReferenceConfigured(false); setSettingsNotice({ tone: "success", text: "Reference photo deleted. Your wardrobe remains unchanged." }); window.dispatchEvent(new Event("wardrobe:setup-refresh")); }
+              else setSettingsNotice({ tone: "error", text: "Could not delete the reference photo." });
+            }}><Trash size={15} /> Delete reference</button></div>
+            {settingsNotice && <p className="settings-notice" data-tone={settingsNotice.tone} role="status" aria-live="polite">{settingsNotice.text}</p>}
+            <div className="settings-actions"><a className="secondary-button export-link" href="/api/export">Download wardrobe export</a></div>
+            <div className="settings-card danger-zone"><h3>Destructive controls</h3><button className="delete-button" type="button" onClick={async () => {
+              if (!window.confirm("Delete the entire wardrobe and all generated images? This cannot be undone.")) return;
+              const response = await fetch("/api/data/wardrobe", { method: "DELETE", headers: { "X-Confirm-Action": "DELETE WARDROBE" } });
+              if (response.ok) { setItems([]); setSelectedId(null); setSettingsOpen(false); }
+              else setError("Could not delete the wardrobe.");
+            }}><Trash size={15} /> Delete entire wardrobe</button><button className="secondary-button" type="button" onClick={async () => {
+              const response = await fetch("/api/maintenance/cleanup", { method: "POST" });
+              if (!response.ok) setError("Could not clean old temporary jobs.");
+            }}>Clean old temporary jobs</button></div>
+          </section>
+        </div>
+      )}
+      {cameraOpen && (
+        <Suspense fallback={null}>
+          <CameraCapture
+            onClose={() => setCameraOpen(false)}
+            onSaved={() => {
+              setCameraOpen(false);
+              setReferenceConfigured(true);
+              setSettingsNotice({ tone: "success", text: "Reference photo saved. Outfit try-on is ready." });
+              window.dispatchEvent(new Event("wardrobe:setup-refresh"));
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

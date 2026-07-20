@@ -1,0 +1,407 @@
+import crypto from "node:crypto";
+import path from "node:path";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import express from "express";
+import session from "express-session";
+import helmet from "helmet";
+import { rateLimit } from "express-rate-limit";
+import { verifyPassword } from "./password.mjs";
+import { verifyTotp } from "./totp.mjs";
+import { sanitizeImage } from "./images.mjs";
+import { MySqlUsageStore, UsageStore, Semaphore } from "./usage.mjs";
+import { createStorage } from "./storage.mjs";
+import { MySqlWardrobeRepository } from "./repository.mjs";
+import { createOutfitRouter } from "./outfits.mjs";
+import { wardrobeImportApi } from "../scripts/import-job-api.mjs";
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+}
+
+function loginPage({ csrfToken, error = "", nonce, totpEnabled = false }) {
+  return `<!doctype html><html lang="hr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Noa's Wardrobe — prijava</title>
+  <style nonce="${nonce}">:root{font-family:Instrument Sans,ui-sans-serif,system-ui;color:#24231f;background:#eee9df;color-scheme:light}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 20% 10%,#faf7ef 0,transparent 35%),#e8e1d4}.card{width:min(420px,100%);background:#fbf8f1;border:1px solid #d8d0c2;border-radius:24px;padding:38px;box-shadow:0 24px 70px #4f45331c}.eyebrow{font-size:.72rem;letter-spacing:.18em;text-transform:uppercase;color:#716b60}h1{font:500 2.15rem/1.05 Georgia,serif;margin:12px 0 8px}p{color:#686258;line-height:1.5}label{display:grid;gap:7px;margin-top:18px;font-size:.88rem}input{font:inherit;padding:13px 14px;border:1px solid #cfc6b7;border-radius:10px;background:#fff}input:focus{outline:3px solid #9b805d44;border-color:#8f7452}button{width:100%;margin-top:24px;padding:13px;border:0;border-radius:10px;background:#24231f;color:white;font:600 .92rem/1 system-ui;cursor:pointer}.error{color:#9c2f25;background:#f8e9e5;padding:10px 12px;border-radius:9px;font-size:.86rem}</style></head>
+  <body><main class="card"><div class="eyebrow">Privatni portfolio</div><h1>Noa's Wardrobe</h1><p>Ova garderoba dostupna je samo vlasniku.</p>${error ? `<p class="error" role="alert">${escapeHtml(error)}</p>` : ""}
+  <form method="post" action="/auth/login"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><label>Korisničko ime<input name="username" autocomplete="username" required autofocus></label><label>Lozinka<input type="password" name="password" autocomplete="current-password" required></label>${totpEnabled ? '<label>Jednokratni kod<input name="totp" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" required></label>' : ""}<button type="submit">Prijavi se</button></form></main></body></html>`;
+}
+
+class MySqlSessionStore extends session.Store {
+  constructor(pool) {
+    super();
+    this.pool = pool;
+  }
+
+  get(sessionId, callback) {
+    this.pool.execute("SELECT data, expires FROM sessions WHERE session_id = ? LIMIT 1", [sessionId]).then(async ([rows]) => {
+      const row = rows[0];
+      if (!row || Number(row.expires) <= Math.floor(Date.now() / 1000)) {
+        if (row) await this.pool.execute("DELETE FROM sessions WHERE session_id = ?", [sessionId]);
+        return callback(null, null);
+      }
+      return callback(null, JSON.parse(row.data));
+    }).catch(callback);
+  }
+
+  set(sessionId, value, callback = () => {}) {
+    const expires = value.cookie?.expires
+      ? Math.floor(new Date(value.cookie.expires).getTime() / 1000)
+      : Math.floor((Date.now() + Number(value.cookie?.maxAge || 43_200_000)) / 1000);
+    this.pool.execute(
+      "INSERT INTO sessions (session_id, expires, data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE expires = VALUES(expires), data = VALUES(data)",
+      [sessionId, expires, JSON.stringify(value)],
+    ).then(() => callback()).catch(callback);
+  }
+
+  destroy(sessionId, callback = () => {}) {
+    this.pool.execute("DELETE FROM sessions WHERE session_id = ?", [sessionId]).then(() => callback()).catch(callback);
+  }
+
+  touch(sessionId, value, callback = () => {}) {
+    const expires = value.cookie?.expires
+      ? Math.floor(new Date(value.cookie.expires).getTime() / 1000)
+      : Math.floor((Date.now() + Number(value.cookie?.maxAge || 43_200_000)) / 1000);
+    this.pool.execute("UPDATE sessions SET expires = ? WHERE session_id = ?", [expires, sessionId]).then(() => callback()).catch(callback);
+  }
+}
+
+async function createSessionStore(config) {
+  if (!config.production || !config.database) return new session.MemoryStore();
+  const mysql = await import("mysql2/promise");
+  const pool = mysql.createPool(config.database);
+  return new MySqlSessionStore(pool);
+}
+
+function isStateChanging(method) {
+  return !["GET", "HEAD", "OPTIONS"].includes(method);
+}
+
+function originGuard(config) {
+  return (req, res, next) => {
+    if (!isStateChanging(req.method)) return next();
+    const allowedOrigins = new Set([config.appOrigin.origin]);
+    if (!config.production) {
+      allowedOrigins.add(`http://localhost:${config.port}`);
+      allowedOrigins.add(`http://127.0.0.1:${config.port}`);
+      allowedOrigins.add(`http://[::1]:${config.port}`);
+    }
+    const isAllowed = (value) => {
+      if (allowedOrigins.has(value)) return true;
+      if (config.production) return false;
+      if (value === "null") return true;
+      try {
+        const candidate = new URL(value);
+        const localHosts = new Set(["localhost", "127.0.0.1", "[::1]", "terminal.local"]);
+        return ["http:", "https:"].includes(candidate.protocol)
+          && localHosts.has(candidate.hostname)
+          && (!candidate.port || candidate.port === String(config.port));
+      } catch {
+        return false;
+      }
+    };
+    const origin = req.get("origin");
+    if (origin && !isAllowed(origin)) {
+      if (!config.production) console.warn("Rejected development origin", { origin });
+      return res.status(403).json({ error: "Origin is not allowed" });
+    }
+    const referer = req.get("referer");
+    if (!origin && referer) {
+      try { if (!isAllowed(new URL(referer).origin)) return res.status(403).json({ error: "Origin is not allowed" }); }
+      catch { return res.status(403).json({ error: "Origin is not allowed" }); }
+    }
+    return next();
+  };
+}
+
+function requireAuth(req, res, next) {
+  if (req.session?.authenticated === true) return next();
+  if (req.path.startsWith("/api/") || req.path.startsWith("/auth/")) return res.status(401).json({ error: "Authentication required" });
+  return res.status(401).type("html").send(loginPage({ csrfToken: req.session.csrfToken, nonce: res.locals.cspNonce }));
+}
+
+function requireCsrf(req, res, next) {
+  if (!isStateChanging(req.method)) return next();
+  const supplied = req.get("x-csrf-token");
+  const expected = req.session?.csrfToken;
+  if (supplied && expected) {
+    const suppliedBytes = Buffer.from(supplied);
+    const expectedBytes = Buffer.from(expected);
+    if (suppliedBytes.length === expectedBytes.length && crypto.timingSafeEqual(suppliedBytes, expectedBytes)) return next();
+  }
+  return res.status(403).json({ error: "Invalid CSRF token" });
+}
+
+export async function createApp(config, options = {}) {
+  const app = express();
+  const sessionStore = options.sessionStore || await createSessionStore(config);
+  const usage = options.usageStore || (config.production && config.database
+    ? new MySqlUsageStore(config.database)
+    : new UsageStore(path.join(config.dataDir, "usage.json")));
+  const privateStorage = options.storage || (config.localStorageDir || config.storageDriver === "s3" ? createStorage(config) : null);
+  const metadataStore = options.metadataStore || (config.production && config.database ? new MySqlWardrobeRepository(config.database) : null);
+  const openAISemaphore = new Semaphore(config.maxConcurrentOpenAIJobs);
+  const recordOpenAIAttempt = options.recordOpenAIAttempt || ((event) => console.info("openai_request_attempt", JSON.stringify(event)));
+  await mkdir(config.dataDir, { recursive: true, mode: 0o700 });
+  if (config.storageDriver === "local" && config.localStorageDir) {
+    await mkdir(config.localStorageDir, { recursive: true, mode: 0o700 });
+  }
+
+  if (config.trustProxy !== false) app.set("trust proxy", config.trustProxy);
+  app.disable("x-powered-by");
+  app.use((req, res, next) => {
+    res.locals.cspNonce = crypto.randomBytes(18).toString("base64");
+    next();
+  });
+  app.use(helmet({
+    referrerPolicy: { policy: "no-referrer" },
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        baseUri: ["'none'"],
+        frameAncestors: ["'none'"],
+        formAction: ["'self'"],
+        objectSrc: ["'none'"],
+        imgSrc: ["'self'", "blob:", "data:"],
+        scriptSrc: ["'self'", ...(!config.production ? ["'unsafe-inline'"] : [])],
+        styleSrc: config.production
+          ? ["'self'", (_req, res) => `'nonce-${res.locals.cspNonce}'`]
+          : ["'self'", "'unsafe-inline'"],
+        workerSrc: ["'self'", "blob:"],
+        connectSrc: ["'self'", ...(!config.production ? ["ws:", "wss:"] : [])],
+        manifestSrc: ["'self'"],
+      },
+    },
+    crossOriginResourcePolicy: { policy: "same-origin" },
+  }));
+  app.use((req, res, next) => {
+    const host = req.get("host");
+    const allowed = new Set([config.appOrigin.host, `localhost:${config.port}`, "127.0.0.1"]);
+    if (config.production && !allowed.has(host)) return res.status(400).send("Invalid host");
+    return next();
+  });
+  app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
+  app.use(session({
+    name: config.sessionCookieName,
+    secret: config.sessionSecret,
+    store: sessionStore,
+    resave: false,
+    saveUninitialized: true,
+    rolling: true,
+    cookie: {
+      httpOnly: true,
+      secure: config.production,
+      sameSite: "strict",
+      maxAge: config.sessionTtlMs,
+      path: "/",
+    },
+  }));
+  app.use((req, _res, next) => {
+    req.session.csrfToken ||= crypto.randomBytes(32).toString("base64url");
+    next();
+  });
+  app.use(originGuard(config));
+
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 5,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    handler: (_req, res) => res.status(429).type("html").send("Previše pokušaja prijave. Pokušajte ponovno kasnije."),
+  });
+  app.get("/auth/login", (req, res) => {
+    res.set("Cache-Control", "private, no-store");
+    if (req.session.authenticated) return res.redirect("/");
+    return res.status(200).type("html").send(loginPage({ csrfToken: req.session.csrfToken, nonce: res.locals.cspNonce, totpEnabled: Boolean(config.adminTotpSecret) }));
+  });
+  app.post("/auth/login", loginLimiter, express.urlencoded({ extended: false, limit: "8kb" }), async (req, res) => {
+    res.set("Cache-Control", "private, no-store");
+    const csrfValid = typeof req.body._csrf === "string" && req.body._csrf === req.session.csrfToken;
+    const usernameValid = typeof req.body.username === "string"
+      && crypto.timingSafeEqual(Buffer.from(req.body.username.padEnd(Math.max(req.body.username.length, config.adminUsername.length), "\0")), Buffer.from(config.adminUsername.padEnd(Math.max(req.body.username.length, config.adminUsername.length), "\0")));
+    const passwordValid = await verifyPassword(String(req.body.password || ""), config.adminPasswordHash);
+    const totpValid = !config.adminTotpSecret || verifyTotp(req.body.totp, config.adminTotpSecret);
+    if (!csrfValid || !usernameValid || !passwordValid || !totpValid) {
+      const attempts = (req.session.failedAttempts || 0) + 1;
+      req.session.failedAttempts = attempts;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(1500, 150 * attempts)));
+      return res.status(401).type("html").send(loginPage({ csrfToken: req.session.csrfToken, error: "Pogrešno korisničko ime, lozinka ili kod.", nonce: res.locals.cspNonce, totpEnabled: Boolean(config.adminTotpSecret) }));
+    }
+    return req.session.regenerate((error) => {
+      if (error) return res.status(500).send("Login failed");
+      req.session.authenticated = true;
+      req.session.csrfToken = crypto.randomBytes(32).toString("base64url");
+      return req.session.save(() => res.redirect("/"));
+    });
+  });
+
+  app.use((_req, res, next) => {
+    res.set("Cache-Control", "private, no-store");
+    next();
+  });
+  app.use(requireAuth);
+  app.get("/api/auth/session", (req, res) => res.json({ authenticated: true, csrfToken: req.session.csrfToken, username: config.adminUsername }));
+  app.post("/api/auth/logout", requireCsrf, (req, res) => {
+    req.session.destroy(() => {
+      res.clearCookie(config.sessionCookieName, { path: "/", httpOnly: true, secure: config.production, sameSite: "strict" });
+      res.status(204).end();
+    });
+  });
+
+  app.get("/api/usage", async (_req, res, next) => {
+    try { res.json({ ...(await usage.summary()), dailyImageLimit: config.dailyImageLimit, imageLimitEnabled: config.dailyImageLimit > 0, note: "Procjena aplikacije; OpenAI Billing je konačni izvor potrošnje." }); }
+    catch (error) { next(error); }
+  });
+
+  const uploadLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: "draft-8", legacyHeaders: false });
+  const outfitRouter = createOutfitRouter({
+    dataDir: config.dataDir,
+    storage: privateStorage,
+    metadataStore,
+    usage,
+    semaphore: openAISemaphore,
+    dailyImageLimit: config.dailyImageLimit,
+    openAIKey: config.openAIKey,
+    openAIBaseUrl: config.openAIBaseUrl,
+    openAITimeoutMs: config.openAITimeoutMs,
+    imageModel: config.openAIImageModel,
+    imageQuality: config.openAIImageQuality,
+    generateLimiter: uploadLimiter,
+    maxUploadBytes: config.maxUploadBytes,
+    maxImagePixels: config.maxImagePixels,
+    openAIRetryBaseMs: options.openAIRetryBaseMs,
+    recordOpenAIAttempt: (event) => recordOpenAIAttempt({ source: "outfit", ...event }),
+  });
+  app.use("/api/outfits", (req, res, next) => isStateChanging(req.method) ? requireCsrf(req, res, next) : next());
+  app.use(outfitRouter);
+  app.put("/api/settings/model-reference", uploadLimiter, requireCsrf, express.raw({
+    type: ["image/png", "image/jpeg", "image/webp"],
+    limit: config.maxUploadBytes,
+  }), async (req, res, next) => {
+    try {
+      const sanitized = await sanitizeImage(req.body, { maxBytes: config.maxUploadBytes, maxPixels: config.maxImagePixels });
+      if (privateStorage) await privateStorage.put("settings/model-reference.png", sanitized.bytes, "image/png");
+      else {
+        await mkdir(path.dirname(config.modelReference), { recursive: true, mode: 0o700 });
+        await writeFile(config.modelReference, sanitized.bytes, { mode: 0o600 });
+      }
+      res.status(200).json({ stored: true });
+    } catch (error) { next(error); }
+  });
+  app.delete("/api/settings/model-reference", requireCsrf, async (_req, res, next) => {
+    try {
+      if (privateStorage) await privateStorage.delete("settings/model-reference.png");
+      else await rm(config.modelReference, { force: true });
+      res.status(204).end();
+    }
+    catch (error) { next(error); }
+  });
+
+  app.get("/api/export", async (_req, res, next) => {
+    try {
+      const library = metadataStore
+        ? await metadataStore.loadImported()
+        : JSON.parse(await readFile(path.join(config.dataDir, "library.json"), "utf8").catch((error) => error.code === "ENOENT" ? "[]" : Promise.reject(error)));
+      res.set({ "Cache-Control": "private, no-store", "Content-Disposition": `attachment; filename="wardrobe-export-${new Date().toISOString().slice(0, 10)}.json"` });
+      res.json({ version: 1, exportedAt: new Date().toISOString(), wardrobe: library });
+    } catch (error) { next(error); }
+  });
+
+  const importApi = wardrobeImportApi({
+    env: {
+      ...process.env,
+      WARDROBE_DATA_DIR: config.dataDir,
+      WARDROBE_MODEL_REFERENCE: config.modelReference,
+      OPENAI_API_BASE_URL: config.openAIBaseUrl,
+      OPENAI_API_KEY: config.openAIKey,
+    },
+    maxUploadBytes: config.maxUploadBytes,
+    maxImagePixels: config.maxImagePixels,
+    beforeOpenAI: async (kind) => {
+      if (kind === "images") await usage.assertImageAllowed(config.dailyImageLimit);
+    },
+    recordOpenAI: (kind, outcome) => usage.record(kind, outcome),
+    recordOpenAIAttempt: (event) => recordOpenAIAttempt({ source: "import", ...event }),
+    runOpenAI: (task) => openAISemaphore.run(task),
+    openAITimeoutMs: config.openAITimeoutMs,
+    openAIRetryBaseMs: options.openAIRetryBaseMs,
+    storage: privateStorage,
+    metadataStore,
+    modelReferenceStorageKey: "settings/model-reference.png",
+  });
+  await importApi.initialize(config.root);
+  app.delete("/api/data/wardrobe", requireCsrf, async (req, res, next) => {
+    if (req.get("x-confirm-action") !== "DELETE WARDROBE") return res.status(400).json({ error: "Explicit confirmation is required" });
+    try {
+      if (metadataStore) {
+        const keys = await metadataStore.deleteAll();
+        await Promise.all(keys.map((key) => privateStorage?.delete(key)));
+      }
+      await Promise.all([
+        rm(path.join(config.dataDir, "library.json"), { force: true }),
+        rm(path.join(config.dataDir, "outfits.json"), { force: true }),
+        rm(path.join(config.dataDir, "imported"), { recursive: true, force: true }),
+        rm(path.join(config.dataDir, "jobs"), { recursive: true, force: true }),
+      ]);
+      await Promise.all([
+        privateStorage?.deletePrefix("wardrobe"),
+        privateStorage?.deletePrefix("jobs"),
+        privateStorage?.deletePrefix("outfits"),
+      ]);
+      await Promise.all([
+        mkdir(path.join(config.dataDir, "imported"), { recursive: true, mode: 0o700 }),
+        mkdir(path.join(config.dataDir, "jobs"), { recursive: true, mode: 0o700 }),
+      ]);
+      res.status(204).end();
+    } catch (error) { next(error); }
+  });
+  app.post("/api/maintenance/cleanup", requireCsrf, async (_req, res, next) => {
+    try {
+      if (metadataStore) {
+        const ids = await metadataStore.oldJobIds(new Date(Date.now() - (24 * 60 * 60 * 1000)));
+        await Promise.all(ids.map(async (id) => {
+          await metadataStore.deleteJob(id);
+          await privateStorage?.deletePrefix(`jobs/${id}`);
+        }));
+        return res.json({ deleted: ids.length });
+      }
+      const jobsDirectory = path.join(config.dataDir, "jobs");
+      const { readdir } = await import("node:fs/promises");
+      const entries = await readdir(jobsDirectory).catch(() => []);
+      const cutoff = Date.now() - (24 * 60 * 60 * 1000);
+      let deleted = 0;
+      for (const entry of entries) {
+        if (!/^[a-f0-9-]{36}$/i.test(entry)) continue;
+        const target = path.join(jobsDirectory, entry);
+        const details = await stat(target);
+        if (details.mtimeMs < cutoff) {
+          await rm(target, { recursive: true, force: true });
+          deleted += 1;
+        }
+      }
+      res.json({ deleted });
+    } catch (error) { next(error); }
+  });
+  app.use("/api/import", (req, res, next) => isStateChanging(req.method) ? uploadLimiter(req, res, next) : next());
+  app.use("/api/import", (req, res, next) => isStateChanging(req.method) ? requireCsrf(req, res, next) : next());
+  app.use(importApi.handler);
+
+  if (config.production || options.serveBuild) {
+    const dist = path.join(config.root, "dist");
+    app.use(express.static(dist, { index: false, etag: true, maxAge: 0, setHeaders: (res) => res.setHeader("Cache-Control", "private, no-store") }));
+    app.get("/{*path}", async (_req, res, next) => {
+      try { res.set("Cache-Control", "private, no-store").sendFile(path.join(dist, "index.html")); }
+      catch (error) { next(error); }
+    });
+  } else {
+    const { createServer } = await import("vite");
+    const vite = await createServer({ server: { middlewareMode: true }, appType: "spa" });
+    app.use(vite.middlewares);
+  }
+
+  app.use((error, _req, res, _next) => {
+    const status = error.status || error.statusCode || (error.type === "entity.too.large" ? 413 : 500);
+    if (status >= 500) console.error("Request failed", { name: error.name, status });
+    res.status(status).json({ error: status >= 500 && config.production ? "Internal server error" : error.message });
+  });
+  return app;
+}

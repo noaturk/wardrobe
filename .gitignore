@@ -6,3 +6,11 @@ dist/
 !.env.example
 *.log
 data/
+backups/
+*.tar.gz
+*.sqlite*
+storage/
+private/
+tmp/
+*.pem
+*.key
