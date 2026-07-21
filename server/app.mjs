@@ -131,8 +131,11 @@ function requireCsrf(req, res, next) {
 }
 
 export async function createApp(config, options = {}) {
+  const startupStage = (event, details = {}) => globalThis.__wardrobeStartupDiagnostic?.(event, details);
   const app = express();
+  startupStage("session-store-initializing");
   const sessionStore = options.sessionStore || await createSessionStore(config);
+  startupStage("session-store-initialized");
   const usage = options.usageStore || (config.production && config.database
     ? new MySqlUsageStore(config.database)
     : new UsageStore(path.join(config.dataDir, "usage.json")));
@@ -140,9 +143,13 @@ export async function createApp(config, options = {}) {
   const metadataStore = options.metadataStore || (config.production && config.database ? new MySqlWardrobeRepository(config.database) : null);
   const openAISemaphore = new Semaphore(config.maxConcurrentOpenAIJobs);
   const recordOpenAIAttempt = options.recordOpenAIAttempt || ((event) => console.info("openai_request_attempt", JSON.stringify(event)));
+  startupStage("data-directory-initializing", { path: config.dataDir });
   await mkdir(config.dataDir, { recursive: true, mode: 0o700 });
+  startupStage("data-directory-initialized");
   if (config.storageDriver === "local" && config.localStorageDir) {
+    startupStage("local-storage-initializing", { path: config.localStorageDir });
     await mkdir(config.localStorageDir, { recursive: true, mode: 0o700 });
+    startupStage("local-storage-initialized");
   }
 
   if (config.trustProxy !== false) app.set("trust proxy", config.trustProxy);
@@ -328,7 +335,9 @@ export async function createApp(config, options = {}) {
     metadataStore,
     modelReferenceStorageKey: "settings/model-reference.png",
   });
+  startupStage("import-api-initializing");
   await importApi.initialize(config.root);
+  startupStage("import-api-initialized");
   app.delete("/api/data/wardrobe", requireCsrf, async (req, res, next) => {
     if (req.get("x-confirm-action") !== "DELETE WARDROBE") return res.status(400).json({ error: "Explicit confirmation is required" });
     try {
