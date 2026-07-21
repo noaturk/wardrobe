@@ -123,10 +123,21 @@ export class MySqlUsageStore {
   async summary() {
     const day = this.day();
     const month = day.slice(0, 7);
+    const monthStart = `${month}-01`;
+    const monthEnd = new Date(`${month}-01T00:00:00Z`);
+    monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
     const fields = "analysis_requests AS analysis_requested, analysis_succeeded, analysis_failed, image_requests AS image_requested, image_succeeded, image_failed";
     const sums = "COALESCE(SUM(analysis_requests),0) AS analysis_requested, COALESCE(SUM(analysis_succeeded),0) AS analysis_succeeded, COALESCE(SUM(analysis_failed),0) AS analysis_failed, COALESCE(SUM(image_requests),0) AS image_requested, COALESCE(SUM(image_succeeded),0) AS image_succeeded, COALESCE(SUM(image_failed),0) AS image_failed";
     const [todayRows] = await this.pool.execute(`SELECT ${fields} FROM api_usage_daily WHERE usage_date = ?`, [day]);
-    const [monthRows] = await this.pool.execute(`SELECT ${sums} FROM api_usage_daily WHERE DATE_FORMAT(usage_date, '%Y-%m') = ?`, [month]);
+    // A plain date-range comparison instead of DATE_FORMAT(usage_date, '%Y-%m') = ?: the
+    // DATE_FORMAT() result took on the connection's default collation, which didn't always
+    // match the table's collation on this host and threw "Illegal mix of collations". A
+    // range comparison against the DATE column has no string collation involved at all,
+    // and lets MySQL use an index instead of scanning through a wrapped function.
+    const [monthRows] = await this.pool.execute(
+      `SELECT ${sums} FROM api_usage_daily WHERE usage_date >= ? AND usage_date < ?`,
+      [monthStart, monthEnd.toISOString().slice(0, 10)],
+    );
     const shape = (row = {}) => ({
       analysis: { requested: Number(row.analysis_requested || 0), succeeded: Number(row.analysis_succeeded || 0), failed: Number(row.analysis_failed || 0) },
       images: { requested: Number(row.image_requested || 0), succeeded: Number(row.image_succeeded || 0), failed: Number(row.image_failed || 0) },

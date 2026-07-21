@@ -557,115 +557,175 @@ export function wardrobeImportApi(options = {}) {
     return record;
   }
 
-  async function generate(job, stageName) {
+  // Applies a stage-progress update (loadJob -> mutate phase -> saveJob), the pattern that
+  // repeats at every checkpoint of a generation run. `onlyIfProcessing` guards the OpenAI
+  // streaming-progress callback, which can otherwise report stale progress after a job moved
+  // on (rejected/deleted) while a request was in flight.
+  async function setStagePhase(jobId, stageName, phase, { onlyIfProcessing = false } = {}) {
+    const job = await loadJob(jobId);
+    if (!job?.stages?.[stageName]) return;
+    if (onlyIfProcessing && job.stages[stageName].status !== "processing") return;
+    job.stages[stageName].phase = phase;
+    job.stages[stageName].updatedAt = new Date().toISOString();
+    await saveJob(job);
+  }
+
+  async function recordStageAttempt(jobId, stageName, attemptNumber, telemetry) {
+    const latest = await loadJob(jobId);
+    if (!latest?.stages?.[stageName]) return;
+    const latestStage = latest.stages[stageName];
+    const entry = { generationAttempt: attemptNumber, ...telemetry };
+    latestStage.openAIAttempts = [...(latestStage.openAIAttempts || []), entry].slice(-20);
+    if (entry.requestId) latestStage.lastOpenAIRequestId = entry.requestId;
+    latestStage.updatedAt = entry.finishedAt;
+    await saveJob(latest);
+  }
+
+  function onOpenAIAttempt(jobId, stageName, attemptNumber) {
+    return (telemetry) => Promise.allSettled([
+      options.recordOpenAIAttempt?.(telemetry),
+      recordStageAttempt(jobId, stageName, attemptNumber, telemetry),
+    ].filter(Boolean));
+  }
+
+  // Marks a stage "processing" and bumps its attempt counter. Returns null (instead of
+  // throwing) if even this bookkeeping step fails, since the caller runs unawaited and must
+  // never let an error escape as an unhandled rejection.
+  async function beginStage(job, stageName) {
+    try {
+      const current = await loadJob(job.id);
+      const stage = current.stages[stageName];
+      stage.status = "processing"; stage.phase = "waiting_for_openai"; stage.decision = null; stage.error = null; stage.attempts += 1; stage.startedAt = new Date().toISOString(); stage.updatedAt = stage.startedAt;
+      await saveJob(current);
+      return { current, stage };
+    } catch (error) {
+      console.error("Failed to start background generation task", { jobId: job.id, stageName, name: error.name, message: error.message, stack: error.stack });
+      return null;
+    }
+  }
+
+  // Renders the garment cutout: OpenAI reconstructs the item on a solid chroma-key
+  // background, then local pixel processing removes that background. `chromaKeyUsed` and
+  // `failedAssetUrl` (the raw pre-cleanup render, useful for diagnosing a failed cleanup) are
+  // attached to any thrown error so the caller can record them even on failure.
+  async function generateGarmentImage(current, stage, stageName) {
+    let failedAssetUrl = null;
+    const chromaKeyUsed = chooseChromaKey(current.metadata.color);
+    try {
+      const key = setting("OPENAI_API_KEY");
+      if (!key) throw new Error("OPENAI_API_KEY is not configured");
+      const sourceFile = current.internal.cropFile || current.internal.originalFile;
+      const original = { data: await readJobAsset(current.id, sourceFile), mime: "image/png", name: sourceFile };
+      const basePrompt = options.garmentPrompt || buildGarmentPrompt(current.metadata, chromaKeyUsed);
+      const prompt = stage.prompt ? `${basePrompt}\nUser regeneration direction: ${stage.prompt}` : basePrompt;
+      let bytes = await editImageWithOpenAI({
+        key, baseUrl: apiBaseUrl(), model: setting("OPENAI_GARMENT_MODEL", setting("OPENAI_IMAGE_MODEL", "gpt-image-2")),
+        quality: setting("OPENAI_IMAGE_QUALITY", "medium"), size: "1024x1024", images: [original], prompt,
+        timeoutMs: options.openAITimeoutMs, retryBaseMs: options.openAIRetryBaseMs,
+        beforeOpenAI: options.beforeOpenAI, recordOpenAI: options.recordOpenAI, runOpenAI: options.runOpenAI,
+        onAttempt: onOpenAIAttempt(current.id, stageName, stage.attempts),
+        onProgress: () => setStagePhase(current.id, stageName, "openai_rendering", { onlyIfProcessing: true }),
+      });
+      const rawName = `${stageName}-${stage.attempts}-source.png`;
+      await writeJobAsset(current.id, rawName, bytes);
+      failedAssetUrl = `${ASSET_ROOT}/${current.id}/${rawName}`;
+      await setStagePhase(current.id, stageName, "removing_background");
+      bytes = await removeChromaBackground(bytes, chromaKeyUsed);
+      return { bytes, chromaKeyUsed, failedAssetUrl };
+    } catch (error) {
+      throw Object.assign(error, { chromaKeyUsed, failedAssetUrl });
+    }
+  }
+
+  // Renders the "on me" editorial photo from the approved garment cutout plus the owner's
+  // private reference photo.
+  async function generateModeledImage(current, stage, stageName) {
+    const key = setting("OPENAI_API_KEY");
+    if (!key) throw new Error("OPENAI_API_KEY is not configured");
+    const garmentName = current.stages.garment.assetUrl
+      ? path.basename(new URL(current.stages.garment.assetUrl, "http://localhost").pathname)
+      : `garment-${current.stages.garment.attempts}.png`;
+    const garment = { data: await readJobAsset(current.id, garmentName), mime: "image/png", name: "garment.png" };
+    const modelPath = path.resolve(root, setting("WARDROBE_MODEL_REFERENCE", "data/model-reference.png"));
+    let modelData;
+    try {
+      modelData = privateStorage
+        ? await privateStorage.get(options.modelReferenceStorageKey || "settings/model-reference.png")
+        : await readFile(modelPath);
+    } catch (error) {
+      if (error.code === "ENOENT") throw new Error(`Model reference not found at ${modelPath}. Set WARDROBE_MODEL_REFERENCE or add data/model-reference.png.`);
+      throw error;
+    }
+    const model = { data: modelData, mime: "image/png", name: "model.png" };
+    const basePrompt = options.modeledPrompt || "Create a professional horizontal 3:2 editorial fashion photograph of the person in Image 1 wearing the exact garment from Image 2. Preserve the person's recognizable identity, face, hair, age and proportions. Preserve every garment color, material, fit, construction, graphic, logo and distinctive detail. Keep the complete featured item clearly visible and unobstructed, use understated neutral supporting clothes, realistic anatomy, natural light, authentic fabric, a tasteful real-world setting, and leave environmental space around the model. No text, watermark, product mockup, or synthetic appearance.";
+    const prompt = stage.prompt ? `${basePrompt}\nUser regeneration direction: ${stage.prompt}` : basePrompt;
+    const bytes = await editImageWithOpenAI({
+      key, baseUrl: apiBaseUrl(), model: setting("OPENAI_MODELED_MODEL", setting("OPENAI_IMAGE_MODEL", "gpt-image-2")),
+      quality: setting("OPENAI_IMAGE_QUALITY", "medium"), size: "1536x1024", images: [model, garment], prompt,
+      timeoutMs: options.openAITimeoutMs, retryBaseMs: options.openAIRetryBaseMs,
+      beforeOpenAI: options.beforeOpenAI, recordOpenAI: options.recordOpenAI, runOpenAI: options.runOpenAI,
+      onAttempt: onOpenAIAttempt(current.id, stageName, stage.attempts),
+    });
+    await setStagePhase(current.id, stageName, "storing_result");
+    return { bytes };
+  }
+
+  async function finalizeStageSuccess(current, stageName, output, bytes, chromaKeyUsed) {
+    await writeJobAsset(current.id, path.basename(output), bytes);
+    const fresh = await loadJob(current.id);
+    const freshStage = fresh.stages[stageName];
+    freshStage.status = "review";
+    freshStage.phase = "ready_for_review";
+    freshStage.assetUrl = `${ASSET_ROOT}/${fresh.id}/${path.basename(output)}`;
+    freshStage.failedAssetUrl = null;
+    freshStage.cleanupPreviewUrl = null;
+    freshStage.cleanupDiagnostics = null;
+    if (chromaKeyUsed) freshStage.chromaKey = chromaKeyUsed;
+    freshStage.updatedAt = new Date().toISOString();
+    await saveJob(fresh);
+  }
+
+  // Records a failed generation attempt. Wrapped in its own try/catch since this runs from
+  // inside the outer catch handler of an unawaited background task: if recording the failure
+  // itself fails (e.g. a transient DB error), that must be logged, not thrown, or it becomes
+  // an unhandled rejection that crashes the whole server.
+  async function recordStageFailure(jobId, stageName, error) {
+    console.error("Background generation task failed", { jobId, stageName, name: error.name, message: error.message, stack: error.stack });
+    try {
+      const fresh = await loadJob(jobId);
+      const freshStage = fresh.stages[stageName];
+      freshStage.status = "failed"; freshStage.phase = "failed"; freshStage.error = error.message; freshStage.updatedAt = new Date().toISOString();
+      if (typeof error.failedAssetUrl === "string") freshStage.failedAssetUrl = error.failedAssetUrl;
+      if (error.chromaKeyUsed) freshStage.chromaKey = error.chromaKeyUsed;
+      await saveJob(fresh);
+    } catch (recordError) {
+      console.error("Failed to record background generation failure", { jobId, stageName, name: recordError.name, message: recordError.message, stack: recordError.stack });
+    }
+  }
+
+  async function runGenerationTask(job, stageName) {
+    const started = await beginStage(job, stageName);
+    if (!started) return;
+    const { current, stage } = started;
+    try {
+      const output = path.join(jobsDir, current.id, `${stageName}-${stage.attempts}.png`);
+      const { bytes, chromaKeyUsed } = stageName === "garment"
+        ? await generateGarmentImage(current, stage, stageName)
+        : await generateModeledImage(current, stage, stageName);
+      await finalizeStageSuccess(current, stageName, output, bytes, chromaKeyUsed);
+    } catch (error) {
+      await recordStageFailure(job.id, stageName, error);
+    }
+  }
+
+  // The caller never awaits this (`void generate(...)`), so any error that escapes
+  // runGenerationTask becomes an unhandled promise rejection, which crashes the whole Node
+  // process by default — runGenerationTask and everything it calls must therefore always
+  // resolve, never reject.
+  function generate(job, stageName) {
     const lock = `${job.id}:${stageName}`;
     if (running.has(lock)) return running.get(lock);
-    const task = (async () => {
-      // The caller never awaits this task (`void generate(...)`), so any error that escapes
-      // this function becomes an unhandled promise rejection, which crashes the whole Node
-      // process by default. Every path below must stay inside a try/catch that logs instead
-      // of throwing, including the failure-recording path itself.
-      let current;
-      let stage;
-      let failedAssetUrl = null;
-      let chromaKeyUsed = null;
-      try {
-        current = await loadJob(job.id);
-        stage = current.stages[stageName];
-        stage.status = "processing"; stage.phase = "waiting_for_openai"; stage.decision = null; stage.error = null; stage.attempts += 1; stage.startedAt = new Date().toISOString(); stage.updatedAt = stage.startedAt;
-        await saveJob(current);
-      } catch (error) {
-        console.error("Failed to start background generation task", { jobId: job.id, stageName, name: error.name, message: error.message, stack: error.stack });
-        return;
-      }
-      try {
-        const dir = path.join(jobsDir, current.id);
-        const output = path.join(dir, `${stageName}-${stage.attempts}.png`);
-        const key = setting("OPENAI_API_KEY");
-        if (!key) throw new Error("OPENAI_API_KEY is not configured");
-        const sourceFile = stageName === "garment" && current.internal.cropFile ? current.internal.cropFile : current.internal.originalFile;
-        const original = { data: await readJobAsset(current.id, sourceFile), mime: "image/png", name: sourceFile };
-        const recordStageAttempt = async (telemetry) => {
-          const latest = await loadJob(current.id);
-          if (!latest?.stages?.[stageName]) return;
-          const latestStage = latest.stages[stageName];
-          const entry = { generationAttempt: stage.attempts, ...telemetry };
-          latestStage.openAIAttempts = [...(latestStage.openAIAttempts || []), entry].slice(-20);
-          if (entry.requestId) latestStage.lastOpenAIRequestId = entry.requestId;
-          latestStage.updatedAt = entry.finishedAt;
-          await saveJob(latest);
-        };
-        let bytes;
-        if (stageName === "garment") {
-          chromaKeyUsed = chooseChromaKey(current.metadata.color);
-          const basePrompt = options.garmentPrompt || buildGarmentPrompt(current.metadata, chromaKeyUsed);
-          bytes = await editImageWithOpenAI({ key, baseUrl: apiBaseUrl(), model: setting("OPENAI_GARMENT_MODEL", setting("OPENAI_IMAGE_MODEL", "gpt-image-2")), quality: setting("OPENAI_IMAGE_QUALITY", "medium"), size: "1024x1024", images: [original], prompt: current.stages.garment.prompt ? `${basePrompt}\nUser regeneration direction: ${current.stages.garment.prompt}` : basePrompt, timeoutMs: options.openAITimeoutMs, retryBaseMs: options.openAIRetryBaseMs, beforeOpenAI: options.beforeOpenAI, recordOpenAI: options.recordOpenAI, runOpenAI: options.runOpenAI, onAttempt: async (telemetry) => {
-            await Promise.allSettled([options.recordOpenAIAttempt?.(telemetry), recordStageAttempt(telemetry)].filter(Boolean));
-          }, onProgress: async () => {
-            const progress = await loadJob(current.id);
-            if (!progress?.stages?.[stageName] || progress.stages[stageName].status !== "processing") return;
-            progress.stages[stageName].phase = "openai_rendering";
-            progress.stages[stageName].updatedAt = new Date().toISOString();
-            await saveJob(progress);
-          } });
-          const rawName = `${stageName}-${stage.attempts}-source.png`;
-          await writeJobAsset(current.id, rawName, bytes);
-          failedAssetUrl = `${ASSET_ROOT}/${current.id}/${rawName}`;
-          const cleanupProgress = await loadJob(current.id);
-          cleanupProgress.stages[stageName].phase = "removing_background";
-          cleanupProgress.stages[stageName].updatedAt = new Date().toISOString();
-          await saveJob(cleanupProgress);
-          bytes = await removeChromaBackground(bytes, chromaKeyUsed);
-        } else {
-          const garmentName = current.stages.garment.assetUrl
-            ? path.basename(new URL(current.stages.garment.assetUrl, "http://localhost").pathname)
-            : `garment-${current.stages.garment.attempts}.png`;
-          const garmentFile = path.join(dir, garmentName);
-          const garment = { data: await readJobAsset(current.id, garmentName), mime: "image/png", name: "garment.png" };
-          const modelPath = path.resolve(root, setting("WARDROBE_MODEL_REFERENCE", "data/model-reference.png"));
-          let modelData;
-          try {
-            modelData = privateStorage
-              ? await privateStorage.get(options.modelReferenceStorageKey || "settings/model-reference.png")
-              : await readFile(modelPath);
-          } catch (error) {
-            if (error.code === "ENOENT") throw new Error(`Model reference not found at ${modelPath}. Set WARDROBE_MODEL_REFERENCE or add data/model-reference.png.`);
-            throw error;
-          }
-          const model = { data: modelData, mime: "image/png", name: "model.png" };
-          const basePrompt = options.modeledPrompt || "Create a professional horizontal 3:2 editorial fashion photograph of the person in Image 1 wearing the exact garment from Image 2. Preserve the person's recognizable identity, face, hair, age and proportions. Preserve every garment color, material, fit, construction, graphic, logo and distinctive detail. Keep the complete featured item clearly visible and unobstructed, use understated neutral supporting clothes, realistic anatomy, natural light, authentic fabric, a tasteful real-world setting, and leave environmental space around the model. No text, watermark, product mockup, or synthetic appearance.";
-          bytes = await editImageWithOpenAI({ key, baseUrl: apiBaseUrl(), model: setting("OPENAI_MODELED_MODEL", setting("OPENAI_IMAGE_MODEL", "gpt-image-2")), quality: setting("OPENAI_IMAGE_QUALITY", "medium"), size: "1536x1024", images: [model, garment], prompt: current.stages.modeled.prompt ? `${basePrompt}\nUser regeneration direction: ${current.stages.modeled.prompt}` : basePrompt, timeoutMs: options.openAITimeoutMs, retryBaseMs: options.openAIRetryBaseMs, beforeOpenAI: options.beforeOpenAI, recordOpenAI: options.recordOpenAI, runOpenAI: options.runOpenAI, onAttempt: async (telemetry) => {
-            await Promise.allSettled([options.recordOpenAIAttempt?.(telemetry), recordStageAttempt(telemetry)].filter(Boolean));
-          } });
-          const storageProgress = await loadJob(current.id);
-          storageProgress.stages[stageName].phase = "storing_result";
-          storageProgress.stages[stageName].updatedAt = new Date().toISOString();
-          await saveJob(storageProgress);
-        }
-        await writeJobAsset(current.id, path.basename(output), bytes);
-        const fresh = await loadJob(current.id);
-        fresh.stages[stageName].status = "review";
-        fresh.stages[stageName].phase = "ready_for_review";
-        fresh.stages[stageName].assetUrl = `${ASSET_ROOT}/${fresh.id}/${path.basename(output)}`;
-        fresh.stages[stageName].failedAssetUrl = null;
-        fresh.stages[stageName].cleanupPreviewUrl = null;
-        fresh.stages[stageName].cleanupDiagnostics = null;
-        if (chromaKeyUsed) fresh.stages[stageName].chromaKey = chromaKeyUsed;
-        fresh.stages[stageName].updatedAt = new Date().toISOString();
-        await saveJob(fresh);
-      } catch (error) {
-        console.error("Background generation task failed", { jobId: job.id, stageName, name: error.name, message: error.message, stack: error.stack });
-        try {
-          const fresh = await loadJob(current.id);
-          fresh.stages[stageName].status = "failed"; fresh.stages[stageName].phase = "failed"; fresh.stages[stageName].error = error.message; fresh.stages[stageName].updatedAt = new Date().toISOString();
-          if (typeof failedAssetUrl === "string") fresh.stages[stageName].failedAssetUrl = failedAssetUrl;
-          if (chromaKeyUsed) fresh.stages[stageName].chromaKey = chromaKeyUsed;
-          await saveJob(fresh);
-        } catch (recordError) {
-          console.error("Failed to record background generation failure", { jobId: job.id, stageName, name: recordError.name, message: recordError.message, stack: recordError.stack });
-        }
-      }
-    })().finally(() => running.delete(lock));
+    const task = runGenerationTask(job, stageName).finally(() => running.delete(lock));
     running.set(lock, task);
     return task;
   }
