@@ -413,7 +413,10 @@ export async function createApp(config, options = {}) {
   app.use((error, req, res, _next) => {
     const status = error.status || error.statusCode || (error.type === "entity.too.large" ? 413 : 500);
     if (status >= 500) console.error("Request failed", { method: req.method, path: req.path, name: error.name, message: error.message, stack: error.stack });
-    res.status(status).json({ error: status >= 500 && config.production ? "Internal server error" : error.message });
+    // Every API route requires an authenticated session, and this is a single-user private app,
+    // so the only person who could ever see this response is the owner — the real error message
+    // is more useful here than a generic one, since it shows up directly in the UI.
+    res.status(status).json({ error: error.message || "Something went wrong" });
   });
   return app;
 }

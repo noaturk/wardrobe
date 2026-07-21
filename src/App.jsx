@@ -1097,7 +1097,10 @@ export function App() {
     const load = async () => {
       try {
         const response = await fetch("/api/import/wardrobe", { cache: "no-store" });
-        if (!response.ok) throw new Error("Could not load the wardrobe.");
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.error || `Request failed (${response.status})`);
+        }
         const loadedItems = await response.json();
         if (cancelled) return;
         const edits = readEdits();
@@ -1106,11 +1109,11 @@ export function App() {
         setItems(visibleItems.map((item) => ({ ...item, ...(edits[item.id] || {}) })));
         setError("");
         setLoading(false);
-      } catch {
+      } catch (loadError) {
         if (cancelled) return;
         attempt += 1;
         if (attempt < 5) timer = setTimeout(load, Math.min(5_000, 750 * (2 ** (attempt - 1))));
-        else { setError("Could not reach the wardrobe server. Your saved pieces are not lost."); setLoading(false); }
+        else { setError(loadError.message || "Could not reach the wardrobe server."); setLoading(false); }
       }
     };
     void load();
@@ -1148,13 +1151,19 @@ export function App() {
   const retryWardrobe = () => {
     setLoading(true); setError("");
     fetch("/api/import/wardrobe", { cache: "no-store" })
-      .then((response) => { if (!response.ok) throw new Error(); return response.json(); })
+      .then(async (response) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.error || `Request failed (${response.status})`);
+        }
+        return response.json();
+      })
       .then((loadedItems) => {
         const edits = readEdits();
         const deleted = readDeletedItems();
         setItems(loadedItems.filter((item) => !deleted.has(item.id)).map((item) => ({ ...item, ...(edits[item.id] || {}) })));
       })
-      .catch(() => setError("Could not reach the wardrobe server. Try again in a moment."))
+      .catch((retryError) => setError(retryError.message || "Could not reach the wardrobe server."))
       .finally(() => setLoading(false));
   };
 
