@@ -141,6 +141,7 @@ test("security headers and generic invalid credentials are present", async (t) =
   t.after(() => rm(root, { recursive: true, force: true }));
   const agent = request.agent(app);
   const login = await agent.get("/auth/login")
+    .expect("Referrer-Policy", "same-origin")
     .expect("Content-Security-Policy", /frame-ancestors 'none'/)
     .expect("Content-Security-Policy", /worker-src 'self' blob:/);
   await agent.post("/auth/login").type("form").send({

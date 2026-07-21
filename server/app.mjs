@@ -159,7 +159,10 @@ export async function createApp(config, options = {}) {
     next();
   });
   app.use(helmet({
-    referrerPolicy: { policy: "no-referrer" },
+    // Browsers may serialize the Origin header as "null" for an HTML form
+    // submitted from a document served with `no-referrer`. Keep same-origin
+    // navigation context so the origin guard can validate the login POST.
+    referrerPolicy: { policy: "same-origin" },
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
