@@ -39,10 +39,35 @@ function categoryName(item) {
 
 
 async function request(path, options) {
-  const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...(options?.headers || {}) } });
+  let response;
+  try {
+    response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...(options?.headers || {}) } });
+  } catch {
+    // fetch() itself rejected: no response ever arrived (e.g. a proxy dropped a slow
+    // connection). The server has no idea the client disconnected and keeps working, so this
+    // is not proof the request failed — callers that can verify the outcome should do so
+    // instead of reporting a hard failure.
+    throw Object.assign(new Error("Connection was interrupted before a response arrived."), { networkError: true });
+  }
   const body = response.status === 204 ? null : await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body?.error || "The outfit request could not be completed.");
   return body;
+}
+
+async function pollForRecentOutfit(itemIds, { attempts = 36, intervalMs = 5_000 } = {}) {
+  const targetKey = JSON.stringify([...itemIds].sort());
+  const since = Date.now() - 10 * 60 * 1000;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    try {
+      const outfits = await request("/api/outfits");
+      const match = outfits.find((outfit) => outfit.source === "ai"
+        && Date.parse(outfit.createdAt) >= since
+        && JSON.stringify([...outfit.itemIds].sort()) === targetKey);
+      if (match) return match;
+    } catch { /* Keep polling; a transient failure here shouldn't end the recovery attempt. */ }
+  }
+  return null;
 }
 
 function OutfitPieces({ items, onSelectPiece }) {
@@ -171,7 +196,8 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
   const currentWeatherProfile = useMemo(() => weatherState.current ? weatherProfile(weatherState.current) : null, [weatherState.current]);
   const weatherSuggestions = useMemo(() => weatherState.current ? buildWeatherOutfitSuggestions(items, weatherState.current) : [], [items, weatherState.current]);
   const weatherActive = weatherState.status === "ready" && Boolean(currentWeatherProfile);
-  const activeSuggestions = weatherActive && weatherSuggestions.length ? weatherSuggestions : suggestions;
+  const showingWeatherPicks = weatherActive && weatherSuggestions.length > 0;
+  const activeSuggestions = showingWeatherPicks ? weatherSuggestions : suggestions;
 
   useEffect(() => {
     request("/api/import/config")
@@ -195,17 +221,32 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
 
   const generate = async () => {
     if (!selected) return;
+    const itemIds = selected.items.map((item) => item.id);
     setError(""); setGenerating(true); setStartedAt(Date.now()); setElapsed(0);
     try {
       const result = await request("/api/outfits/generate", {
         method: "POST",
-        body: JSON.stringify({ itemIds: selected.items.map((item) => item.id), name: selected.name, direction }),
+        body: JSON.stringify({ itemIds, name: selected.name, direction }),
       });
       setGeneratedResult(result);
       setGeneratedNow((current) => current + 1);
       setSelected(null);
       setDirection("");
-    } catch (requestError) { setError(requestError.message); }
+    } catch (requestError) {
+      if (requestError.networkError) {
+        const recovered = await pollForRecentOutfit(itemIds);
+        if (recovered) {
+          setGeneratedResult(recovered);
+          setGeneratedNow((current) => current + 1);
+          setSelected(null);
+          setDirection("");
+        } else {
+          setError("Connection was interrupted and the result could not be confirmed. Check 'Na meni' in a moment before trying again.");
+        }
+      } else {
+        setError(requestError.message);
+      }
+    }
     finally { setGenerating(false); window.dispatchEvent(new Event("wardrobe:usage-refresh")); }
   };
 
@@ -512,13 +553,15 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
               )}
             </section>
 
-            <section className="outfit-intro">
+            <section className={`outfit-intro${showingWeatherPicks ? " outfit-intro--weather" : ""}`}>
               <div>
-                <p>Brzi početak</p>
-                <h3>Prijedlozi iz tvog ormara</h3>
-                <p>{weatherActive
-                  ? "Prijedlozi su poredani prema trenutnom vremenu. Ne pozivaju OpenAI i ne troše generacije."
-                  : "Prijedlozi koriste samo spremljene kategorije i boje. Ne pozivaju OpenAI i ne troše generacije."}</p>
+                <p>{showingWeatherPicks ? "Prema trenutnom vremenu" : "Brzi početak"}</p>
+                <h3>{showingWeatherPicks ? "Prijedlozi prema vremenu" : "Prijedlozi iz tvog ormara"}</h3>
+                <p>{showingWeatherPicks
+                  ? "Ovi prijedlozi stvarno odgovaraju trenutnim uvjetima — ostali komadi u ormaru nisu dovoljno prilagođeni pa nisu prikazani. Ne pozivaju OpenAI i ne troše generacije."
+                  : weatherActive
+                    ? "Nijedna kombinacija iz ormara nije dovoljno prilagođena trenutnom vremenu, pa su prikazani opći prijedlozi. Ne pozivaju OpenAI i ne troše generacije."
+                    : "Prijedlozi koriste samo spremljene kategorije i boje. Ne pozivaju OpenAI i ne troše generacije."}</p>
               </div>
               <div className="outfit-intro__actions">
                 {weatherActive && currentWeatherProfile && (
@@ -533,9 +576,10 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
             {activeSuggestions.length ? (
               <div className="outfit-suggestions">
                 {activeSuggestions.map((suggestion) => (
-                  <article key={suggestion.id}>
+                  <article key={suggestion.id} className={suggestion.isWeatherPick ? "outfit-suggestions__weather-pick" : undefined}>
                     <OutfitPieces items={suggestion.items} onSelectPiece={setEnlargedPiece} />
                     <div>
+                      {suggestion.isWeatherPick && <span className="outfit-suggestions__badge"><WeatherIcon profile={suggestion.weather} size={12} /> Prema vremenu</span>}
                       <h3>{suggestion.name}</h3>
                       <p>{suggestion.reason}</p>
                       <small>{suggestion.items.map((item) => item.name || categoryName(item)).join(" · ")}</small>

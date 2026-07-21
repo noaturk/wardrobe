@@ -133,6 +133,11 @@ export function buildWeatherOutfitSuggestions(items, current) {
   const profile = weatherProfile(current);
   return buildOutfitSuggestions(items)
     .map((suggestion, index) => ({ suggestion, index, score: combinationWeatherScore(suggestion.items, profile) }))
+    // A net-positive score means the combination actually suits the current conditions (has
+    // the layers/footwear the weather calls for), not just that it was the least-bad option.
+    // Without this filter, a small wardrobe with no weather-appropriate combo at all would
+    // still surface its 4 least-bad combos labeled as tailored picks, which isn't honest.
+    .filter(({ score }) => score > 0)
     .sort((first, second) => second.score - first.score || first.index - second.index)
     .slice(0, 4)
     .map(({ suggestion }, index) => ({
@@ -141,5 +146,6 @@ export function buildWeatherOutfitSuggestions(items, current) {
       name: weatherSuggestionName(profile, index),
       reason: weatherReason(profile),
       weather: profile,
+      isWeatherPick: true,
     }));
 }

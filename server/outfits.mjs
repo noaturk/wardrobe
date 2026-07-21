@@ -37,6 +37,13 @@ function contentTypeForKey(key) {
 
 function buildOutfitPrompt(items, direction = "") {
   const list = items.map((item, index) => `Image ${index + 2}: ${item.name} (${item.part}), exact colors ${[item.color, item.secondaryColor].filter(Boolean).join(" and ") || "as shown"}`).join("\n");
+  // A single selected item is a "how would this look styled" request, not a fixed outfit —
+  // give the model room to act as a stylist and build a genuinely matching look around it,
+  // rather than bolting on the bare minimum. A multi-item selection is an intentional
+  // combination the owner already assembled, so it keeps the stricter "don't add" behavior.
+  const stylingInstruction = items.length === 1
+    ? "This is a single featured item. Style a complete, coherent outfit around it: choose complementary garments, footwear and accessories (not shown in the reference images) that genuinely suit its color, material and style, the way a stylist would. Do not replace, recolor or omit the featured item itself."
+    : "Combine all compatible selected pieces into one coherent outfit. Do not replace, recolor, duplicate or omit a selected item. Add only minimal neutral basics when physically required by an incomplete selection.";
   return `Create one realistic full-body vertical editorial fashion photograph.
 
 Image 1 is the private reference person. Preserve that person's recognizable identity, face, hair, age, skin tone, body proportions and natural anatomy.
@@ -44,7 +51,7 @@ Image 1 is the private reference person. Preserve that person's recognizable ide
 Dress the person in every selected wardrobe item below, using each product image as the exact visual reference:
 ${list}
 
-Preserve the exact garment colors, graphics, logos, material, silhouette, construction and fit. Combine all compatible selected pieces into one coherent outfit. Do not replace, recolor, duplicate or omit a selected item. Add only minimal neutral basics when physically required by an incomplete selection. Show the complete outfit clearly, including footwear when selected. Use natural light and a tasteful real-world setting. No text, watermark, collage, split screen, product grid, extra person or distorted anatomy.${direction ? `\n\nOwner direction: ${direction}` : ""}`;
+Preserve the exact garment colors, graphics, logos, material, silhouette, construction and fit. ${stylingInstruction} Show the complete outfit clearly, including footwear when selected. Use natural light and a tasteful real-world setting. No text, watermark, collage, split screen, product grid, extra person or distorted anatomy.${direction ? `\n\nOwner direction: ${direction}` : ""}`;
 }
 
 export function createOutfitRouter(options) {

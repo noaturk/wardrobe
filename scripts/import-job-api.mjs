@@ -623,7 +623,7 @@ export function wardrobeImportApi(options = {}) {
       const prompt = stage.prompt ? `${basePrompt}\nUser regeneration direction: ${stage.prompt}` : basePrompt;
       let bytes = await editImageWithOpenAI({
         key, baseUrl: apiBaseUrl(), model: setting("OPENAI_GARMENT_MODEL", setting("OPENAI_IMAGE_MODEL", "gpt-image-2")),
-        quality: setting("OPENAI_IMAGE_QUALITY", "medium"), size: "1024x1024", images: [original], prompt,
+        quality: setting("OPENAI_GARMENT_QUALITY", setting("OPENAI_IMAGE_QUALITY", "medium")), size: "1024x1024", images: [original], prompt,
         timeoutMs: options.openAITimeoutMs, retryBaseMs: options.openAIRetryBaseMs,
         beforeOpenAI: options.beforeOpenAI, recordOpenAI: options.recordOpenAI, runOpenAI: options.runOpenAI,
         onAttempt: onOpenAIAttempt(current.id, stageName, stage.attempts),
@@ -664,7 +664,7 @@ export function wardrobeImportApi(options = {}) {
     const prompt = stage.prompt ? `${basePrompt}\nUser regeneration direction: ${stage.prompt}` : basePrompt;
     const bytes = await editImageWithOpenAI({
       key, baseUrl: apiBaseUrl(), model: setting("OPENAI_MODELED_MODEL", setting("OPENAI_IMAGE_MODEL", "gpt-image-2")),
-      quality: setting("OPENAI_IMAGE_QUALITY", "medium"), size: "1536x1024", images: [model, garment], prompt,
+      quality: setting("OPENAI_MODELED_QUALITY", setting("OPENAI_IMAGE_QUALITY", "medium")), size: "1536x1024", images: [model, garment], prompt,
       timeoutMs: options.openAITimeoutMs, retryBaseMs: options.openAIRetryBaseMs,
       beforeOpenAI: options.beforeOpenAI, recordOpenAI: options.recordOpenAI, runOpenAI: options.runOpenAI,
       onAttempt: onOpenAIAttempt(current.id, stageName, stage.attempts),

@@ -101,6 +101,11 @@ export function loadConfig(env = process.env, root = process.cwd()) {
     openAIBaseUrl: openAIBaseUrl.toString().replace(/\/$/, ""),
     openAIImageModel: env.OPENAI_IMAGE_MODEL || "gpt-image-2",
     openAIImageQuality: env.OPENAI_IMAGE_QUALITY || "medium",
+    // Full-outfit try-on (Kombinacije) can be tuned independently of the import pipeline's
+    // garment/modeled segments (which already have their own OPENAI_GARMENT_*/OPENAI_MODELED_*
+    // overrides) — falls back to the shared image model/quality above when unset.
+    openAIOutfitModel: env.OPENAI_OUTFIT_MODEL || env.OPENAI_IMAGE_MODEL || "gpt-image-2",
+    openAIOutfitQuality: env.OPENAI_OUTFIT_QUALITY || env.OPENAI_IMAGE_QUALITY || "medium",
     maxConcurrentOpenAIJobs: integer(env, "MAX_CONCURRENT_OPENAI_JOBS", 1, { max: 4 }),
     dailyImageLimit: integer(env, "DAILY_IMAGE_GENERATION_LIMIT", 0, { min: 0, max: 100_000 }),
     openAITimeoutMs: integer(env, "OPENAI_TIMEOUT_MS", 150_000, { min: 5_000, max: 300_000 }),

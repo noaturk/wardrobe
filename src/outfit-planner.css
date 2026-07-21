@@ -122,9 +122,13 @@
 .outfit-builder > footer button { flex: 0 0 auto; min-height: 44px; border: 1px solid var(--olive); border-radius: var(--radius-sm); padding: 0 18px; color: #fff; background: var(--olive); font-size: 11px; font-weight: 650; cursor: pointer; }
 .outfit-builder > footer button:hover:not(:disabled) { background: #000000; }
 
-.outfit-intro { align-items: flex-end; margin-top: 36px; margin-bottom: 14px; }
+.outfit-intro { align-items: flex-end; margin-top: 36px; margin-bottom: 14px; padding: 14px 16px; border-radius: var(--radius-md); transition: background-color 160ms ease; }
 .outfit-intro > div > p:first-child { margin-bottom: 4px; color: var(--accent); font-size: 9px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; }
 .outfit-intro h3 { font-size: 18px; }
+.outfit-intro--weather { background: var(--olive-soft); }
+.outfit-intro--weather > div > p:first-child { color: var(--olive); }
+.outfit-suggestions__badge { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 6px; padding: 3px 8px; border-radius: 999px; color: var(--olive); background: var(--olive-soft); font-size: 9px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.outfit-suggestions__weather-pick { border-color: var(--olive); box-shadow: inset 3px 0 0 var(--olive); }
 .outfit-intro__actions { display: flex; align-items: center; gap: 12px; }
 .outfit-intro__weather { display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--olive); background: var(--olive-soft); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .outfit-intro__random { min-height: 40px; display: inline-flex; align-items: center; gap: 7px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink); background: var(--paper-bright); font-size: 11px; font-weight: 600; white-space: nowrap; cursor: pointer; }
