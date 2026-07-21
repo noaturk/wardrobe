@@ -19,6 +19,7 @@ import { CameraCapture, uploadModelReference } from "./camera-capture.jsx";
 import { IMAGE_ACCEPT, isHeicFile, prepareImageFile } from "./image-files.mjs";
 import { CATEGORY_LABELS, buildOutfitSuggestions } from "./outfit-suggestions.mjs";
 import { buildWeatherOutfitSuggestions, fetchCurrentWeather, manualWeatherCurrent, weatherProfile } from "./weather-outfits.mjs";
+import { buildOccasionOutfitSuggestions } from "./occasion-outfits.mjs";
 import { readStoredManualWeather, readWeatherLocationPreference } from "./weather-preferences.mjs";
 import "./outfit-planner.css";
 
@@ -70,7 +71,7 @@ async function pollForRecentOutfit(itemIds, { attempts = 36, intervalMs = 5_000 
   return null;
 }
 
-function OutfitPieces({ items, onSelectPiece }) {
+function OutfitPieces({ items, onSelectPiece, missingLabel }) {
   return (
     <div className="outfit-pieces">
       {items.map((item) => (
@@ -81,6 +82,12 @@ function OutfitPieces({ items, onSelectPiece }) {
           <figcaption>{item.name || categoryName(item)}</figcaption>
         </figure>
       ))}
+      {missingLabel && (
+        <figure className="outfit-pieces__missing">
+          <span className="outfit-pieces__missing-slot" aria-hidden="true">+</span>
+          <figcaption>{missingLabel}</figcaption>
+        </figure>
+      )}
     </div>
   );
 }
@@ -193,11 +200,14 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
   const ownPhotoLibraryRef = useRef(null);
   const ownPhotoCameraRef = useRef(null);
   const [enlargedPiece, setEnlargedPiece] = useState(null);
+  const [occasionText, setOccasionText] = useState("");
   const currentWeatherProfile = useMemo(() => weatherState.current ? weatherProfile(weatherState.current) : null, [weatherState.current]);
   const weatherSuggestions = useMemo(() => weatherState.current ? buildWeatherOutfitSuggestions(items, weatherState.current) : [], [items, weatherState.current]);
   const weatherActive = weatherState.status === "ready" && Boolean(currentWeatherProfile);
   const showingWeatherPicks = weatherActive && weatherSuggestions.length > 0;
-  const activeSuggestions = showingWeatherPicks ? weatherSuggestions : suggestions;
+  const occasionSuggestions = useMemo(() => buildOccasionOutfitSuggestions(items, occasionText), [items, occasionText]);
+  const showingOccasionPicks = occasionSuggestions.length > 0;
+  const activeSuggestions = showingOccasionPicks ? occasionSuggestions : showingWeatherPicks ? weatherSuggestions : suggestions;
 
   useEffect(() => {
     request("/api/import/config")
@@ -553,15 +563,33 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
               )}
             </section>
 
-            <section className={`outfit-intro${showingWeatherPicks ? " outfit-intro--weather" : ""}`}>
+            <section className={`occasion-bar${showingOccasionPicks ? " occasion-bar--active" : ""}`}>
+              <label className="occasion-bar__label" htmlFor="occasion-input">Za koju priliku ti treba kombinacija?</label>
+              <input
+                id="occasion-input"
+                type="text"
+                className="occasion-bar__input"
+                value={occasionText}
+                onChange={(event) => setOccasionText(event.target.value)}
+                placeholder="npr. poslovni sastanak, izlazak navečer, teretana…"
+                maxLength={120}
+              />
+              {occasionText.trim() && !showingOccasionPicks && (
+                <p className="occasion-bar__empty">Nema dovoljno prepoznatljivih komada za ovaj opis — ispod su prikazani drugi prijedlozi.</p>
+              )}
+            </section>
+
+            <section className={`outfit-intro${showingOccasionPicks ? " outfit-intro--occasion" : showingWeatherPicks ? " outfit-intro--weather" : ""}`}>
               <div>
-                <p>{showingWeatherPicks ? "Prema trenutnom vremenu" : "Brzi početak"}</p>
-                <h3>{showingWeatherPicks ? "Prijedlozi prema vremenu" : "Prijedlozi iz tvog ormara"}</h3>
-                <p>{showingWeatherPicks
-                  ? "Ovi prijedlozi stvarno odgovaraju trenutnim uvjetima — ostali komadi u ormaru nisu dovoljno prilagođeni pa nisu prikazani. Ne pozivaju OpenAI i ne troše generacije."
-                  : weatherActive
-                    ? "Nijedna kombinacija iz ormara nije dovoljno prilagođena trenutnom vremenu, pa su prikazani opći prijedlozi. Ne pozivaju OpenAI i ne troše generacije."
-                    : "Prijedlozi koriste samo spremljene kategorije i boje. Ne pozivaju OpenAI i ne troše generacije."}</p>
+                <p>{showingOccasionPicks ? "Prema opisu prilike" : showingWeatherPicks ? "Prema trenutnom vremenu" : "Brzi početak"}</p>
+                <h3>{showingOccasionPicks ? "Prijedlozi za priliku" : showingWeatherPicks ? "Prijedlozi prema vremenu" : "Prijedlozi iz tvog ormara"}</h3>
+                <p>{showingOccasionPicks
+                  ? "Ovi prijedlozi su odabrani prema opisu prilike koji si upisao/la gore. Ne pozivaju OpenAI i ne troše generacije."
+                  : showingWeatherPicks
+                    ? "Ovi prijedlozi stvarno odgovaraju trenutnim uvjetima — ostali komadi u ormaru nisu dovoljno prilagođeni pa nisu prikazani. Ne pozivaju OpenAI i ne troše generacije."
+                    : weatherActive
+                      ? "Nijedna kombinacija iz ormara nije dovoljno prilagođena trenutnom vremenu, pa su prikazani opći prijedlozi. Ne pozivaju OpenAI i ne troše generacije."
+                      : "Prijedlozi koriste samo spremljene kategorije i boje. Ne pozivaju OpenAI i ne troše generacije."}</p>
               </div>
               <div className="outfit-intro__actions">
                 {weatherActive && currentWeatherProfile && (
@@ -576,12 +604,13 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
             {activeSuggestions.length ? (
               <div className="outfit-suggestions">
                 {activeSuggestions.map((suggestion) => (
-                  <article key={suggestion.id} className={suggestion.isWeatherPick ? "outfit-suggestions__weather-pick" : undefined}>
-                    <OutfitPieces items={suggestion.items} onSelectPiece={setEnlargedPiece} />
+                  <article key={suggestion.id} className={suggestion.isWeatherPick || suggestion.isOccasionPick ? "outfit-suggestions__weather-pick" : undefined}>
+                    <OutfitPieces items={suggestion.items} onSelectPiece={setEnlargedPiece} missingLabel={suggestion.missingPiece} />
                     <div>
                       {suggestion.isWeatherPick && <span className="outfit-suggestions__badge"><WeatherIcon profile={suggestion.weather} size={12} /> Prema vremenu</span>}
+                      {suggestion.isOccasionPick && <span className="outfit-suggestions__badge">Za priliku</span>}
                       <h3>{suggestion.name}</h3>
-                      <p>{suggestion.reason}</p>
+                      <p>{suggestion.reason}{suggestion.missingPiece && <> Nedostaje: <strong>{suggestion.missingPiece}</strong>.</>}</p>
                       <small>{suggestion.items.map((item) => item.name || categoryName(item)).join(" · ")}</small>
                     </div>
                     <button onClick={() => setSelected(suggestion)}>Odaberi ovu kombinaciju</button>

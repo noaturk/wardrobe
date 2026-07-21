@@ -125,8 +125,16 @@
 .outfit-intro { align-items: flex-end; margin-top: 36px; margin-bottom: 14px; padding: 14px 16px; border-radius: var(--radius-md); transition: background-color 160ms ease; }
 .outfit-intro > div > p:first-child { margin-bottom: 4px; color: var(--accent); font-size: 9px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; }
 .outfit-intro h3 { font-size: 18px; }
-.outfit-intro--weather { background: var(--olive-soft); }
-.outfit-intro--weather > div > p:first-child { color: var(--olive); }
+.outfit-intro--weather,
+.outfit-intro--occasion { background: var(--olive-soft); }
+.outfit-intro--weather > div > p:first-child,
+.outfit-intro--occasion > div > p:first-child { color: var(--olive); }
+.occasion-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; margin-top: 28px; padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(249, 250, 251, .58); transition: border-color 160ms ease, background-color 160ms ease; }
+.occasion-bar--active { border-color: var(--olive); background: var(--olive-soft); }
+.occasion-bar__label { flex: 0 0 auto; color: var(--ink); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.occasion-bar__input { flex: 1 1 220px; min-height: 38px; min-width: 0; border: 1px solid var(--line-strong); border-radius: 999px; padding: 0 14px; color: var(--ink); background: var(--paper); font-family: inherit; font-size: 12px; outline: none; }
+.occasion-bar__input:focus-visible { border-color: var(--olive); box-shadow: 0 0 0 2px rgba(39, 39, 42, .18); }
+.occasion-bar__empty { flex: 1 0 100%; margin: 0; color: var(--muted); font-size: 10px; line-height: 1.4; }
 .outfit-suggestions__badge { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 6px; padding: 3px 8px; border-radius: 999px; color: var(--olive); background: var(--olive-soft); font-size: 9px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
 .outfit-suggestions__weather-pick { border-color: var(--olive); box-shadow: inset 3px 0 0 var(--olive); }
 .outfit-intro__actions { display: flex; align-items: center; gap: 12px; }
@@ -150,6 +158,8 @@
 .outfit-pieces__image:hover img,
 .outfit-pieces__image:focus-visible img { transform: scale(1.05); }
 .outfit-pieces__image:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.outfit-pieces__missing-slot { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: 1.5px dashed var(--line-strong); border-radius: var(--radius-sm); color: var(--muted); font-size: 20px; font-weight: 300; }
+.outfit-pieces__missing figcaption { color: var(--olive); font-weight: 600; }
 
 .outfit-selection__copy { border-radius: var(--radius-md); background: rgba(249, 250, 251,.58); }
 .outfit-selection__copy h3 { font-family: "Poppins", sans-serif; }

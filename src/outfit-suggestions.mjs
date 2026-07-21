@@ -55,20 +55,23 @@ export function buildOutfitSuggestions(items) {
     seen.add(key);
     combinations.push(unique);
   };
+  const pick = (list, offset) => (list.length ? list[offset % list.length] : null);
 
   for (const [topIndex, top] of tops.entries()) {
     for (const [bottomIndex, bottom] of bottoms.entries()) {
       const offset = topIndex + bottomIndex;
-      add([top, bottom, shoes[offset % Math.max(1, shoes.length)], accessories[offset % Math.max(1, accessories.length)]]);
-      if (jackets.length) add([top, bottom, jackets[offset % jackets.length], shoes[(offset + 1) % Math.max(1, shoes.length)]]);
+      // A full look pulls in one item from every available category (not capped at 4) —
+      // always at most one per category, so nothing is ever doubled up.
+      add([top, bottom, pick(shoes, offset), pick(accessories, offset)]);
+      if (jackets.length) add([top, bottom, pick(jackets, offset), pick(shoes, offset + 1), pick(accessories, offset + 1)]);
       if (combinations.length >= 8) break;
     }
     if (combinations.length >= 8) break;
   }
 
   for (const [pieceIndex, piece] of onepieces.entries()) {
-    add([piece, shoes[pieceIndex % Math.max(1, shoes.length)], accessories[pieceIndex % Math.max(1, accessories.length)]]);
-    if (jackets.length) add([piece, jackets[pieceIndex % jackets.length], shoes[(pieceIndex + 1) % Math.max(1, shoes.length)]]);
+    add([piece, pick(shoes, pieceIndex), pick(accessories, pieceIndex)]);
+    if (jackets.length) add([piece, pick(jackets, pieceIndex), pick(shoes, pieceIndex + 1), pick(accessories, pieceIndex + 1)]);
     if (combinations.length >= 8) break;
   }
 

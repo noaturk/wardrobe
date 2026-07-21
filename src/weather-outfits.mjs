@@ -99,6 +99,18 @@ function combinationWeatherScore(items, profile) {
   return score;
 }
 
+// What single piece would turn a close-but-incomplete combination into a genuine fit — used
+// to show a "+" placeholder instead of silently hiding an otherwise-good combo over one gap.
+function missingPieceHint(items, profile) {
+  const hasJacket = items.some((item) => item.part === "wholebody_up");
+  if (hasJacket) return null;
+  if (profile.snowy) return "topla nepromočiva jakna";
+  if (profile.rainy) return "nepromočiva jakna";
+  if (profile.temperatureBand === "cold") return "topla jakna";
+  if (profile.temperatureBand === "cool" || profile.windy) return "lagana jakna";
+  return null;
+}
+
 function weatherSuggestionName(profile, index) {
   const names = profile.snowy
     ? ["Slojevito za snijeg", "Topliji izbor", "Za hladan izlazak"]
@@ -132,20 +144,25 @@ function weatherReason(profile) {
 export function buildWeatherOutfitSuggestions(items, current) {
   const profile = weatherProfile(current);
   return buildOutfitSuggestions(items)
-    .map((suggestion, index) => ({ suggestion, index, score: combinationWeatherScore(suggestion.items, profile) }))
-    // A net-positive score means the combination actually suits the current conditions (has
-    // the layers/footwear the weather calls for), not just that it was the least-bad option.
-    // Without this filter, a small wardrobe with no weather-appropriate combo at all would
-    // still surface its 4 least-bad combos labeled as tailored picks, which isn't honest.
-    .filter(({ score }) => score > 0)
+    .map((suggestion, index) => {
+      const score = combinationWeatherScore(suggestion.items, profile);
+      return { suggestion, index, score, missing: missingPieceHint(suggestion.items, profile) };
+    })
+    // A net-positive score means the combination already suits the current conditions. A
+    // combo that's merely close — its only gap is the one missing category `missing`
+    // identifies — is still included so it can show a "+" placeholder for what would complete
+    // it, instead of silently disappearing. Anything worse than that isn't honest to label as
+    // a tailored pick.
+    .filter(({ score, missing }) => score > 0 || (missing && score > -6))
     .sort((first, second) => second.score - first.score || first.index - second.index)
     .slice(0, 4)
-    .map(({ suggestion }, index) => ({
+    .map(({ suggestion, score, missing }, index) => ({
       ...suggestion,
       id: `weather-${suggestion.id}`,
       name: weatherSuggestionName(profile, index),
       reason: weatherReason(profile),
       weather: profile,
       isWeatherPick: true,
+      missingPiece: score > 0 ? null : missing,
     }));
 }
