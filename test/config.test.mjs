@@ -41,6 +41,15 @@ test("production accepts an explicit private sibling storage directory", () => {
   assert.equal(config.production, true);
 });
 
+test("production accepts a Hostinger-safe dot-delimited password hash", () => {
+  const root = path.resolve("/tmp/wardrobe-config-root");
+  const config = loadConfig(productionEnv({
+    LOCAL_STORAGE_DIR: "../wardrobe-private",
+    ADMIN_PASSWORD_HASH: "scrypt.32768.8.1.salt.hash",
+  }), root);
+  assert.equal(config.adminPasswordHash, "scrypt$32768$8$1$salt$hash");
+});
+
 test("image generation limit is manually configurable and zero means unlimited", () => {
   const root = path.resolve("/tmp/wardrobe-config-root");
   const unlimited = loadConfig(productionEnv({ LOCAL_STORAGE_DIR: "../wardrobe-private" }), root);

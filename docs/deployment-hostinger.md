@@ -9,7 +9,7 @@
    branch.
 3. Select Express/Other server-side app and Node.js `22.x`.
 4. Build command: `npm ci && npm run build`.
-5. Start command: `npm run start` (entry file `server/index.mjs` if requested).
+5. Start command: `npm run start` (entry file `server.cjs` if requested).
    Output directory is `dist`, but this is not a static-only deployment.
 6. Create a Hostinger MySQL database and configure either `DATABASE_URL` or the
    `DB_*` variables. Apply `migrations/001_initial.sql` through phpMyAdmin if
@@ -20,7 +20,9 @@
    inputs only; never copy the clear password into this repository.
 8. Generate `ADMIN_PASSWORD_HASH` locally with
    `npm run auth:hash-password`. Generate `SESSION_SECRET` with a password
-   manager or a cryptographically secure 32+ byte generator.
+   manager or a cryptographically secure 32+ byte generator. If hPanel alters
+   dollar signs in the hash, replace every `$` separator with `.` before saving
+   it; the application normalizes this Hostinger-safe representation at startup.
 9. Configure `STORAGE_DRIVER=local`, `LOCAL_STORAGE_DIR=../wardrobe-private`,
    `ALLOW_LOCAL_PRODUCTION_STORAGE=true` and
    `WARDROBE_BACKUP_DIR=../wardrobe-backups` as described in
