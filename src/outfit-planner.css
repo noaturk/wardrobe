@@ -41,7 +41,7 @@
 .outfit-confirm p strong { display: block; color: var(--ink); }
 .outfit-confirm__go { min-width: 220px; padding: 0 22px; }
 .outfit-reference-chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 6px 5px 11px; color: #2f5d3a; background: #e4efe3; border: 1px solid #c2d9c1; border-radius: 999px; font-size: 10px; font-weight: 600; }
-.outfit-reference-chip button { padding: 3px 9px; color: var(--ink); background: rgba(255,255,255,.75); border: 1px solid var(--line); border-radius: 999px; font-size: 10px; font-weight: 600; cursor: pointer; }
+.outfit-reference-chip button { min-height: 44px; padding: 3px 9px; color: var(--ink); background: rgba(255,255,255,.75); border: 1px solid var(--line); border-radius: 999px; font-size: 10px; font-weight: 600; cursor: pointer; }
 .outfit-reference-chip button:hover { border-color: var(--ink); }
 .outfit-reference-notice { margin: 12px 0 0; padding: 10px 12px; color: #2f5d3a; background: #e4efe3; border-radius: 10px; font-size: 11px; }
 .outfit-reference { display: grid; gap: 14px; padding: 18px; border: 1px solid #d7b8b1; border-radius: 16px; background: #f4e4df; }
@@ -90,3 +90,98 @@
   .outfit-reference__actions { flex-direction: column; }
 }
 @media (prefers-reduced-motion: reduce) { .outfit-generating > svg, .outfit-status svg { animation: none; } }
+
+/* Embedded combinations workspace. */
+.outfit-page { width: 100%; max-width: 1540px; margin: 0 auto; }
+.outfit-panel--embedded { width: 100%; max-height: none; overflow: visible; border: 0; border-radius: 0; padding: 40px; background: transparent; box-shadow: none; }
+.outfit-panel--embedded .outfit-heading { align-items: flex-end; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+.outfit-heading p { color: var(--accent); font-weight: 650; }
+.outfit-heading h2 { font-family: "Fraunces Variable", Georgia, serif; font-size: clamp(38px, 4vw, 56px); font-weight: 520; line-height: .98; }
+.outfit-heading > div > span { display: block; max-width: 680px; margin-top: 8px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.outfit-heading > button { flex: 0 0 44px; width: 44px; height: 44px; border-radius: var(--radius-sm); }
+.outfit-flow { gap: 0; margin: 20px 0 24px; }
+.outfit-flow li { min-height: 44px; border-color: var(--line); font-size: 11px; }
+.outfit-flow li span { width: 24px; height: 24px; }
+
+.outfit-builder { display: grid; gap: 14px; margin-bottom: 32px; padding: 18px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: rgba(255,250,242,.58); }
+.outfit-builder > header { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+.outfit-builder > header p { margin: 0 0 4px; color: var(--accent); font-size: 9px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; }
+.outfit-builder > header h3 { margin: 0; font: 540 24px/1 "Fraunces Variable", Georgia, serif; letter-spacing: -.025em; }
+.outfit-builder > header > span { color: var(--muted); font-size: 11px; }
+.outfit-builder__grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+.outfit-builder__grid > button { position: relative; min-width: 0; display: grid; grid-template-rows: auto auto auto; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; padding: 7px; color: var(--ink); background: var(--paper-bright); text-align: left; cursor: pointer; }
+.outfit-builder__grid > button:hover:not(:disabled) { border-color: var(--line-strong); transform: translateY(-1px); }
+.outfit-builder__grid > button.selected { border-color: var(--olive); box-shadow: 0 0 0 2px rgba(82,96,73,.18); }
+.outfit-builder__grid > button > img { width: 100%; aspect-ratio: 4 / 5; object-fit: contain; border-radius: 8px; background: #e9e2d7; }
+.outfit-builder__grid > button strong { overflow: hidden; margin: 8px 2px 2px; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.outfit-builder__grid > button small { margin-inline: 2px; overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.outfit-builder__check { position: absolute; top: 13px; right: 13px; z-index: 2; width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--ink); background: rgba(255,250,242,.92); }
+.outfit-builder__grid > button.selected .outfit-builder__check { color: #fff; background: var(--olive); border-color: var(--olive); }
+.outfit-builder > footer { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-top: 4px; }
+.outfit-builder > footer p { min-width: 0; margin: 0; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.outfit-builder > footer button { flex: 0 0 auto; min-height: 44px; border: 1px solid var(--olive); border-radius: var(--radius-sm); padding: 0 18px; color: #fff; background: var(--olive); font-size: 11px; font-weight: 650; cursor: pointer; }
+.outfit-builder > footer button:hover:not(:disabled) { background: #3e4938; }
+
+.outfit-intro { align-items: flex-end; margin-bottom: 14px; }
+.outfit-intro > div > p:first-child { margin-bottom: 4px; color: var(--accent); font-size: 9px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; }
+.outfit-intro h3 { font-size: 18px; }
+.outfit-suggestions { gap: 14px; }
+.outfit-suggestions > article { border-radius: var(--radius-md); background: rgba(255,250,242,.62); }
+.outfit-suggestions > article > button,
+.outfit-empty button,
+.outfit-confirm__go,
+.outfit-reference__primary { min-height: 44px; border-radius: var(--radius-sm); background: var(--accent); border-color: var(--accent); }
+.outfit-suggestions > article > button:hover,
+.outfit-empty button:hover,
+.outfit-confirm__go:hover:not(:disabled),
+.outfit-reference__primary:hover:not(:disabled) { background: var(--accent-dark); border-color: var(--accent-dark); }
+.outfit-pieces img { border-radius: var(--radius-sm); background: #e9e2d7; }
+.outfit-selection__copy { border-radius: var(--radius-md); background: rgba(255,250,242,.58); }
+.outfit-selection__copy h3 { font-family: "Fraunces Variable", Georgia, serif; }
+.outfit-direction textarea { min-height: 88px; border-radius: var(--radius-sm); background: var(--paper-bright); }
+.outfit-reference-chip,
+.outfit-reference-chip button { border-radius: var(--radius-sm); }
+.outfit-reference { border-radius: var(--radius-md); }
+.outfit-reference__secondary { border-radius: var(--radius-sm); }
+.outfit-generating { border-radius: var(--radius-md); background: rgba(255,250,242,.62); }
+.outfit-generating small { display: block; margin-top: 6px; color: var(--olive); font-size: 10px; line-height: 1.4; }
+
+.outfit-complete { display: grid; grid-template-columns: 76px minmax(0, 1fr) auto; gap: 14px; align-items: center; margin-bottom: 18px; padding: 12px; border: 1px solid #b9c9b1; border-radius: var(--radius-md); background: var(--olive-soft); }
+.outfit-complete img { width: 76px; height: 90px; object-fit: contain; border-radius: var(--radius-sm); background: #d5cec3; }
+.outfit-complete p { margin: 0 0 2px; color: var(--success); font-size: 9px; font-weight: 650; letter-spacing: .1em; text-transform: uppercase; }
+.outfit-complete h3 { margin: 0 0 3px; font-size: 15px; }
+.outfit-complete span { color: var(--muted); font-size: 11px; }
+.outfit-complete button { min-height: 44px; border: 1px solid var(--olive); border-radius: var(--radius-sm); padding: 0 14px; color: #fff; background: var(--olive); font-size: 11px; font-weight: 650; cursor: pointer; }
+
+.outfit-usage { padding-top: 16px; border-top: 1px solid var(--line); }
+
+@media (max-width: 1100px) {
+  .outfit-builder__grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  .outfit-page { width: 100%; }
+  .outfit-page .outfit-panel { width: 100%; max-height: none; padding: 24px 16px 56px; border-radius: 0; }
+  .outfit-panel--embedded .outfit-heading { align-items: flex-start; }
+  .outfit-heading h2 { font-size: 40px; }
+  .outfit-heading > div > span { font-size: 12px; }
+  .outfit-flow { gap: 0; margin: 16px 0 20px; overflow: hidden; }
+  .outfit-flow li { min-width: 0; flex-direction: column; align-items: flex-start; gap: 4px; padding-inline: 7px; font-size: 9px; }
+  .outfit-builder { margin-inline: 0; padding: 14px; border-radius: var(--radius-md); }
+  .outfit-builder > header { align-items: flex-start; }
+  .outfit-builder > header h3 { font-size: 21px; }
+  .outfit-builder__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .outfit-builder > footer { align-items: stretch; flex-direction: column; gap: 10px; }
+  .outfit-builder > footer p { white-space: normal; line-height: 1.4; }
+  .outfit-builder > footer button { width: 100%; }
+  .outfit-intro { align-items: flex-start; flex-direction: column; }
+  .outfit-suggestions > article { grid-template-columns: 112px minmax(0, 1fr); padding: 10px; }
+  .outfit-pieces figure { grid-template-rows: 70px auto; }
+  .outfit-pieces img { height: 70px; }
+  .outfit-selection__copy { padding: 14px; }
+  .outfit-selection__copy .outfit-pieces figure { grid-template-rows: 96px auto; }
+  .outfit-selection__copy .outfit-pieces img { height: 96px; }
+  .outfit-complete { grid-template-columns: 62px minmax(0, 1fr); }
+  .outfit-complete img { width: 62px; height: 76px; }
+  .outfit-complete button { grid-column: 1 / -1; width: 100%; }
+}

@@ -9,9 +9,11 @@ import { SignOut } from "@phosphor-icons/react/SignOut";
 import { TShirt } from "@phosphor-icons/react/TShirt";
 import { Trash } from "@phosphor-icons/react/Trash";
 import { Camera } from "@phosphor-icons/react/Camera";
+import { CaretDown } from "@phosphor-icons/react/CaretDown";
 import { X } from "@phosphor-icons/react/X";
 import { OptimizedImage } from "./OptimizedImage.jsx";
 import { IMAGE_ACCEPT, isHeicFile, prepareImageFile } from "./image-files.mjs";
+import { LookLightbox, LooksCollection } from "./looks-collection.jsx";
 
 const CameraCapture = lazy(() => import("./camera-capture.jsx").then((module) => ({ default: module.CameraCapture })));
 
@@ -22,12 +24,12 @@ const STORAGE_KEY = "open-wardrobe-edits-v1";
 const DELETED_STORAGE_KEY = "open-wardrobe-deleted-v1";
 
 const TYPES = [
-  { id: "all", label: "All" },
-  { id: "upperbody", label: "Tops", singular: "Top" },
-  { id: "wholebody_up", label: "Jackets", singular: "Jacket" },
-  { id: "lowerbody", label: "Bottoms", singular: "Bottom" },
-  { id: "accessories_up", label: "Accessories", singular: "Accessory" },
-  { id: "shoes", label: "Shoes", singular: "Shoes" },
+  { id: "all", label: "Sve" },
+  { id: "upperbody", label: "Gornji dijelovi", singular: "Gornji dio" },
+  { id: "wholebody_up", label: "Jakne", singular: "Jakna" },
+  { id: "lowerbody", label: "Donji dijelovi", singular: "Donji dio" },
+  { id: "accessories_up", label: "Dodaci", singular: "Dodatak" },
+  { id: "shoes", label: "Obuća", singular: "Obuća" },
 ];
 
 const TYPE_MAP = Object.fromEntries(TYPES.map((type) => [type.id, type]));
@@ -174,18 +176,17 @@ function sampleImageColor(image, canvas, event) {
 }
 
 function GalleryItem({ item, selected, onOpen, index }) {
-  const type = TYPE_MAP[item.part]?.singular || "wardrobe item";
+  const type = TYPE_MAP[item.part]?.singular || "Komad odjeće";
 
   return (
     <button
       className={`gallery-item${selected ? " selected" : ""}`}
       type="button"
       onClick={() => onOpen(item.id)}
-      aria-label={`View ${item.name || type}`}
+      aria-label={`Otvori ${item.name || type}`}
       aria-pressed={selected}
       data-testid={`wardrobe-item-${item.id}`}
     >
-      <span className="gallery-item__index" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
       <span className="gallery-item__art"><OptimizedImage
           src={item.thumbnail || item.image}
           alt=""
@@ -357,7 +358,7 @@ function ItemEditor({ draft, setDraft, palette, sampling, setSampling, sampleSta
   );
 }
 
-function ItemAppearanceStudio({ item, onOpenSettings }) {
+function ItemAppearanceStudio({ item, onOpenSettings, onRecordsChange, onOpenRecord }) {
   const libraryRef = useRef(null);
   const cameraRef = useRef(null);
   const [records, setRecords] = useState([]);
@@ -367,6 +368,7 @@ function ItemAppearanceStudio({ item, onOpenSettings }) {
   const [startedAt, setStartedAt] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [notice, setNotice] = useState(null);
+  const [photoChoicesOpen, setPhotoChoicesOpen] = useState(false);
 
   const loadStudio = useCallback(async () => {
     try {
@@ -376,7 +378,9 @@ function ItemAppearanceStudio({ item, onOpenSettings }) {
       ]);
       if (!outfitsResponse.ok || !configResponse.ok) throw new Error("Could not load your try-on studio.");
       const [outfits, config] = await Promise.all([outfitsResponse.json(), configResponse.json()]);
-      setRecords(outfits.filter((record) => record.itemIds?.includes(item.id)));
+      const matchingRecords = outfits.filter((record) => record.itemIds?.includes(item.id));
+      setRecords(matchingRecords);
+      onRecordsChange?.(matchingRecords);
       setReferenceReady(Boolean(config.hasModelReference));
       setNotice(null);
     } catch (loadError) {
@@ -400,9 +404,13 @@ function ItemAppearanceStudio({ item, onOpenSettings }) {
     return () => clearInterval(timer);
   }, [busy, startedAt]);
 
-  const addResult = (record, text) => {
-    setRecords((current) => [record, ...current]);
-    setNotice({ tone: "success", text });
+  const addResult = (record, message) => {
+    setRecords((current) => {
+      const next = [record, ...current];
+      onRecordsChange?.(next);
+      return next;
+    });
+    setNotice({ tone: "success", text: message });
   };
 
   const generateWithAI = async () => {
@@ -410,16 +418,17 @@ function ItemAppearanceStudio({ item, onOpenSettings }) {
     setBusy("ai");
     setStartedAt(Date.now());
     setElapsed(0);
-    setNotice({ tone: "progress", text: "Preparing your private reference and this exact garment…" });
+    setNotice({ tone: "progress", text: "Pripremam privatnu referentnu fotografiju i ovaj komad…" });
     try {
       const response = await fetch("/api/outfits/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ itemIds: [item.id], name: `${item.name || "Wardrobe piece"} on me` }),
+        body: JSON.stringify({ itemIds: [item.id], name: `${item.name || "Komad"} na meni` }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error || "The AI try-on could not be created.");
-      addResult(body, "AI try-on finished and was saved privately.");
+      if (!response.ok) throw new Error(body.error || "AI prikaz nije moguće izraditi.");
+      addResult(body, "AI prikaz je gotov i privatno spremljen.");
+      onOpenRecord?.(body, false);
       window.dispatchEvent(new Event("wardrobe:usage-refresh"));
     } catch (generateError) {
       setNotice({ tone: "error", text: generateError.message });
@@ -433,7 +442,7 @@ function ItemAppearanceStudio({ item, onOpenSettings }) {
     setBusy("photo");
     setStartedAt(Date.now());
     setElapsed(0);
-    setNotice({ tone: "progress", text: isHeicFile(file) ? "Converting your iPhone photo privately…" : "Saving your photo privately…" });
+    setNotice({ tone: "progress", text: isHeicFile(file) ? "Privatno pretvaram iPhone fotografiju…" : "Privatno spremam fotografiju…" });
     try {
       const prepared = await prepareImageFile(file);
       const response = await fetch(`/api/outfits/photos?itemId=${encodeURIComponent(item.id)}`, {
@@ -442,8 +451,9 @@ function ItemAppearanceStudio({ item, onOpenSettings }) {
         body: prepared,
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error || "Your wearing photo could not be saved.");
-      addResult(body, "Your real photo was saved privately. No AI generation was used.");
+      if (!response.ok) throw new Error(body.error || "Fotografiju nije moguće spremiti.");
+      addResult(body, "Tvoja fotografija je privatno spremljena. OpenAI nije korišten.");
+      setPhotoChoicesOpen(false);
     } catch (uploadError) {
       setNotice({ tone: "error", text: uploadError.message });
     } finally {
@@ -452,10 +462,14 @@ function ItemAppearanceStudio({ item, onOpenSettings }) {
   };
 
   const removeResult = async (record) => {
-    if (!window.confirm(`Delete “${record.name}”?`)) return;
+    if (!window.confirm(`Obrisati “${record.name}”?`)) return;
     const response = await fetch(`/api/outfits/${record.id}`, { method: "DELETE" });
-    if (response.ok) setRecords((current) => current.filter((candidate) => candidate.id !== record.id));
-    else setNotice({ tone: "error", text: "That result could not be deleted." });
+    if (response.ok) setRecords((current) => {
+      const next = current.filter((candidate) => candidate.id !== record.id);
+      onRecordsChange?.(next);
+      return next;
+    });
+    else setNotice({ tone: "error", text: "Taj prikaz trenutačno nije moguće obrisati." });
   };
 
   const elapsedLabel = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${String(elapsed % 60).padStart(2, "0")}s`;
@@ -464,53 +478,61 @@ function ItemAppearanceStudio({ item, onOpenSettings }) {
     <section className="appearance-studio" aria-labelledby={`appearance-${item.id}`} aria-busy={Boolean(busy)}>
       <div className="appearance-studio__heading">
         <div>
-          <p>On you</p>
-          <h3 id={`appearance-${item.id}`}>See it worn, your way.</h3>
+          <p>Privatna kabina</p>
+          <h3 id={`appearance-${item.id}`}>Kako mi stoji?</h3>
         </div>
-        {loading && <SpinnerGap className="wardrobe-state__spinner" size={18} aria-label="Loading try-ons" />}
+        {loading && <SpinnerGap className="wardrobe-state__spinner" size={18} aria-label="Učitavam prikaze" />}
       </div>
 
-      <div className="appearance-choices">
-        <article className="appearance-choice appearance-choice--ai">
-          <span className="appearance-choice__number">01</span>
-          <Sparkle size={22} weight="fill" aria-hidden="true" />
-          <div><strong>Try with AI</strong><p>Uses your saved reference photo and this garment.</p></div>
+      <article className="tryon-primary">
+        <span className="tryon-primary__icon"><Sparkle size={19} weight="fill" aria-hidden="true" /></span>
+        <div className="tryon-primary__copy">
+          <strong>Isprobaj uz AI</strong>
+          <p>Koristi tvoju privatnu referentnu fotografiju i jednu OpenAI image generaciju.</p>
+        </div>
+        <div className="tryon-primary__action">
           {referenceReady === false ? (
-            <button type="button" onClick={onOpenSettings}>Add reference photo</button>
+            <button type="button" onClick={onOpenSettings}>Dodaj referentnu fotografiju</button>
           ) : (
             <button type="button" onClick={generateWithAI} disabled={referenceReady !== true || Boolean(busy)}>
-              {busy === "ai" ? <><SpinnerGap className="wardrobe-state__spinner" size={15} /> Generating · {elapsedLabel}</> : "Create AI try-on"}
+              {busy === "ai" ? <><SpinnerGap className="wardrobe-state__spinner" size={15} /> Generiranje · {elapsedLabel}</> : referenceReady === null ? "Provjeravam…" : "Isprobaj uz AI"}
             </button>
           )}
-        </article>
+        </div>
+        {busy === "ai" && <p className="tryon-primary__progress"><strong>OpenAI obrađuje prikaz · {elapsedLabel}</strong> Panel možeš zatvoriti; obrada će se nastaviti u pozadini.</p>}
+      </article>
 
-        <article className="appearance-choice appearance-choice--photo">
-          <span className="appearance-choice__number">02</span>
-          <Camera size={22} weight="bold" aria-hidden="true" />
-          <div><strong>Add my real photo</strong><p>Photograph yourself wearing it. No AI or OpenAI cost.</p></div>
-          <div className="appearance-choice__photo-actions">
-            <button type="button" onClick={() => cameraRef.current?.click()} disabled={Boolean(busy)}>Take photo</button>
-            <button type="button" onClick={() => libraryRef.current?.click()} disabled={Boolean(busy)}>Choose photo</button>
+      <div className={`photo-disclosure${photoChoicesOpen ? " is-open" : ""}`}>
+        <button className="photo-disclosure__trigger" type="button" onClick={() => setPhotoChoicesOpen((current) => !current)} aria-expanded={photoChoicesOpen}>
+          <span><Camera size={18} weight="bold" aria-hidden="true" /><span><strong>Dodaj svoju fotografiju</strong><small>Sprema se privatno i ne koristi OpenAI.</small></span></span>
+          <CaretDown size={17} aria-hidden="true" />
+        </button>
+        {photoChoicesOpen && (
+          <div className="photo-disclosure__actions">
+            <button type="button" onClick={() => cameraRef.current?.click()} disabled={Boolean(busy)}><Camera size={16} /> Fotografiraj se</button>
+            <button type="button" onClick={() => libraryRef.current?.click()} disabled={Boolean(busy)}>Odaberi iz galerije</button>
           </div>
-        </article>
+        )}
       </div>
 
-      {busy === "photo" && <p className="appearance-notice" data-tone="progress"><SpinnerGap className="wardrobe-state__spinner" size={14} /> Saving photo · {elapsedLabel}</p>}
+      {busy === "photo" && <p className="appearance-notice" data-tone="progress"><SpinnerGap className="wardrobe-state__spinner" size={14} /> Spremanje fotografije · {elapsedLabel}</p>}
       {notice && <p className="appearance-notice" data-tone={notice.tone} role={notice.tone === "error" ? "alert" : "status"}>{notice.text}</p>}
 
       {!!records.length && (
-        <div className="appearance-history">
-          <div className="appearance-history__heading"><strong>Your looks</strong><span>{records.length} saved</span></div>
+        <section className="appearance-history" aria-label="Rezultati na meni">
+          <div className="appearance-history__heading"><div><p>Rezultati</p><strong>Na meni</strong></div><span>{records.length} spremljeno</span></div>
           <div className="appearance-history__rail">
             {records.map((record) => (
-              <figure key={record.id}>
-                <img src={record.image} alt={`${record.name}, ${record.source === "ai" ? "AI try-on" : "your real photo"}`} />
-                <figcaption><span>{record.source === "ai" ? "AI try-on" : "My photo"}</span><time>{new Date(record.createdAt).toLocaleDateString()}</time></figcaption>
+              <figure key={record.id} className="appearance-result">
+                <button className="appearance-result__open" type="button" onClick={() => onOpenRecord?.(record, true)} aria-label={`Otvori ${record.name} preko cijelog ekrana`}>
+                  <img src={record.image} alt="" />
+                </button>
+                <figcaption><span>{record.source === "ai" ? "AI prikaz" : "Moja fotografija"}</span><time>{new Date(record.createdAt).toLocaleDateString("hr-HR")}</time></figcaption>
                 <button type="button" onClick={() => removeResult(record)} aria-label={`Delete ${record.name}`}><Trash size={14} /></button>
               </figure>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
       <input ref={libraryRef} type="file" accept={IMAGE_ACCEPT} hidden onChange={(event) => { void uploadWearingPhoto(event.target.files?.[0]); event.target.value = ""; }} />
@@ -519,7 +541,7 @@ function ItemAppearanceStudio({ item, onOpenSettings }) {
   );
 }
 
-function ItemViewer({ item, onClose, onSave, onDelete, onDeleteModeled, onOpenSettings }) {
+function LegacyItemViewer({ item, onClose, onSave, onDelete, onDeleteModeled, onOpenSettings }) {
   const closeButtonRef = useRef(null);
   const imageRef = useRef(null);
   const samplingCanvasRef = useRef(null);
@@ -726,6 +748,230 @@ function ItemViewer({ item, onClose, onSave, onDelete, onDeleteModeled, onOpenSe
   );
 }
 
+function ItemViewer({ item, onClose, onSave, onDelete, onDeleteModeled, onOpenSettings, deleting, deleteError }) {
+  const closeButtonRef = useRef(null);
+  const samplingCanvasRef = useRef(null);
+  const shakeTimerRef = useRef(null);
+  const [sampling, setSampling] = useState(null);
+  const [sampleStatus, setSampleStatus] = useState("");
+  const [palette, setPalette] = useState(item.palette || []);
+  const [draft, setDraft] = useState({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
+  const [shaking, setShaking] = useState(false);
+  const [closeBlocked, setCloseBlocked] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [activeView, setActiveView] = useState(() => item.modeledImage ? "modeled" : "garment");
+  const [appearanceRecords, setAppearanceRecords] = useState([]);
+  const [activeRecordId, setActiveRecordId] = useState(null);
+  const [lightboxRecord, setLightboxRecord] = useState(null);
+  const type = TYPE_MAP[item.part]?.singular || "Komad odjeće";
+  const hasModeledImage = Boolean(item.modeledImage);
+
+  const isDirty = useMemo(() => {
+    const normalizedTags = (tags) => tags.map((tag) => tag.trim()).filter(Boolean);
+    return JSON.stringify({
+      name: draft.name.trim(),
+      part: draft.part,
+      color: draft.color?.toLowerCase() || null,
+      secondaryColor: draft.secondaryColor?.toLowerCase() || null,
+      tags: normalizedTags(draft.tags),
+    }) !== JSON.stringify({
+      name: (item.name || "").trim(),
+      part: item.part,
+      color: item.color?.toLowerCase() || null,
+      secondaryColor: item.secondaryColor?.toLowerCase() || null,
+      tags: normalizedTags(item.tags || []),
+    });
+  }, [draft, item]);
+
+  const nudgeUnsaved = useCallback(() => {
+    setCloseBlocked(true);
+    setEditorOpen(true);
+    setShaking(false);
+    requestAnimationFrame(() => requestAnimationFrame(() => setShaking(true)));
+    clearTimeout(shakeTimerRef.current);
+    shakeTimerRef.current = setTimeout(() => setShaking(false), 420);
+  }, []);
+
+  const requestClose = useCallback(() => {
+    if (isDirty) nudgeUnsaved();
+    else onClose();
+  }, [isDirty, nudgeUnsaved, onClose]);
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key !== "Escape" || lightboxRecord) return;
+      if (sampling) setSampling(null);
+      else requestClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    document.body.classList.add("viewer-open");
+    closeButtonRef.current?.focus({ preventScroll: true });
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.classList.remove("viewer-open");
+      clearTimeout(shakeTimerRef.current);
+    };
+  }, [lightboxRecord, requestClose, sampling]);
+
+  useEffect(() => {
+    setSampling(null);
+    setSampleStatus("");
+    setPalette(item.palette || []);
+    setDraft({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
+    setActiveView(item.modeledImage ? "modeled" : "garment");
+    setAppearanceRecords([]);
+    setActiveRecordId(null);
+    setEditorOpen(false);
+    setCloseBlocked(false);
+  }, [item.id]);
+
+  useEffect(() => { if (!isDirty) setCloseBlocked(false); }, [isDirty]);
+
+  const cancelEditing = () => {
+    setDraft({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
+    setSampling(null);
+    setSampleStatus("");
+    setCloseBlocked(false);
+    setEditorOpen(false);
+  };
+
+  const saveEditing = () => {
+    onSave({ ...item, ...draft, name: draft.name.trim(), tags: draft.tags.map((tag) => tag.trim()).filter(Boolean) });
+    setSampling(null);
+    setSampleStatus("Promjene su spremljene.");
+    setCloseBlocked(false);
+    setEditorOpen(false);
+  };
+
+  const toggleEditor = () => {
+    if (editorOpen && isDirty && !window.confirm("Odbaciti nespremljene promjene?")) return;
+    if (editorOpen && isDirty) cancelEditing();
+    else setEditorOpen((current) => !current);
+  };
+
+  const handleImageLoad = (event) => {
+    samplingCanvasRef.current = buildSamplingCanvas(event.currentTarget);
+    const extracted = extractPalette(event.currentTarget);
+    setPalette([...new Set([...(item.palette || []), ...extracted])].slice(0, 5));
+  };
+
+  const handleImageClick = (event) => {
+    if (!sampling || !samplingCanvasRef.current) return;
+    const color = sampleImageColor(event.currentTarget, samplingCanvasRef.current, event);
+    if (!color) {
+      setSampleStatus("To mjesto je prozirno — klikni izravno na odjeću.");
+      return;
+    }
+    const targetField = sampling === "secondary" ? "secondaryColor" : "color";
+    setDraft((current) => ({ ...current, [targetField]: color }));
+    setPalette((current) => [color, ...current.filter((existing) => existing.toLowerCase() !== color.toLowerCase())].slice(0, 5));
+    setSampleStatus(`Odabrana je boja ${color}.`);
+    setSampling(null);
+  };
+
+  const handleRecordsChange = useCallback((records) => {
+    setAppearanceRecords(records);
+    setActiveRecordId((current) => records.some((record) => record.id === current) ? current : records[0]?.id || null);
+    if (!records.length) setActiveView((current) => current === "on-me" ? (item.modeledImage ? "modeled" : "garment") : current);
+  }, [item.modeledImage]);
+
+  const openRecord = useCallback((record, fullscreen = true) => {
+    setActiveRecordId(record.id);
+    setActiveView("on-me");
+    if (fullscreen) setLightboxRecord(record);
+  }, []);
+
+  const activeRecord = appearanceRecords.find((record) => record.id === activeRecordId) || appearanceRecords[0] || null;
+  const activePhoto = activeView === "modeled" ? item.modeledImage : activeView === "on-me" ? activeRecord?.image : item.image;
+  const photoAlt = activeView === "modeled" ? `${draft.name || type} na modelu` : activeView === "on-me" ? `${activeRecord?.name || draft.name || type} na meni` : `Čisti prikaz: ${draft.name || type}`;
+
+  return (
+    <div className="viewer-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
+      <div className="viewer-entry">
+        <aside className={`viewer viewer--redesign${shaking ? " shake" : ""}`} role="dialog" aria-modal="true" aria-label="Detalj odabranog komada">
+          <header className="viewer-heading viewer-heading--redesign">
+            <div>
+              <p className="viewer-heading__meta">
+                <span>{TYPE_MAP[draft.part]?.singular || type}</span>
+                <span className="viewer-color-swatches" aria-label="Boje komada">
+                  {draft.color && <i style={{ backgroundColor: draft.color }} title={`Glavna boja ${draft.color}`} />}
+                  {draft.secondaryColor && <i style={{ backgroundColor: draft.secondaryColor }} title={`Dodatna boja ${draft.secondaryColor}`} />}
+                </span>
+              </p>
+              <h2>{draft.name || TYPE_MAP[draft.part]?.singular}</h2>
+            </div>
+            <button className="viewer-icon-close" type="button" onClick={requestClose} aria-label="Zatvori detalj" ref={closeButtonRef}>
+              <X size={22} aria-hidden="true" />
+            </button>
+          </header>
+
+          <nav className="viewer-tabs" aria-label="Prikaz fotografije">
+            <button type="button" className={activeView === "garment" ? "active" : ""} aria-pressed={activeView === "garment"} onClick={() => setActiveView("garment")}>Komad</button>
+            <button type="button" className={activeView === "modeled" ? "active" : ""} aria-pressed={activeView === "modeled"} onClick={() => setActiveView("modeled")} disabled={!hasModeledImage}>Na modelu</button>
+            <button type="button" className={activeView === "on-me" ? "active" : ""} aria-pressed={activeView === "on-me"} onClick={() => setActiveView("on-me")} disabled={!activeRecord}>Na meni</button>
+          </nav>
+
+          <div className={`viewer-visual viewer-visual--${activeView}${sampling ? " sampling" : ""}`}>
+            <OptimizedImage
+              src={activePhoto}
+              alt={photoAlt}
+              sizes="(max-width: 860px) 100vw, 600px"
+              breakpoints={[320, 480, 640, 800, 1040, 1280]}
+              quality={84}
+              priority
+              onLoad={activeView === "garment" ? handleImageLoad : undefined}
+              onClick={activeView === "garment" ? handleImageClick : activeView === "on-me" && activeRecord ? () => setLightboxRecord(activeRecord) : undefined}
+            />
+            {sampling && <span className="sample-hint">Klikni na odjeću za odabir boje</span>}
+            {activeView !== "garment" && (
+              <button className="viewer-cutout-preview" type="button" onClick={() => setActiveView("garment")} aria-label="Prikaži čisti komad">
+                <OptimizedImage src={item.image} alt="" sizes="120px" breakpoints={[120, 180, 240]} />
+                <span>Čisti komad</span>
+              </button>
+            )}
+          </div>
+
+          <div className="viewer-details editing">
+            <ItemAppearanceStudio item={item} onOpenSettings={onOpenSettings} onRecordsChange={handleRecordsChange} onOpenRecord={openRecord} />
+
+            <section className={`piece-editor${editorOpen ? " is-open" : ""}`}>
+              <button className="piece-editor__toggle" type="button" onClick={toggleEditor} aria-expanded={editorOpen}>
+                <span><strong>Uredi podatke o komadu</strong><small>Naziv, kategorija, boje i tagovi</small></span>
+                <CaretDown size={17} aria-hidden="true" />
+              </button>
+              {editorOpen && (
+                <div className="piece-editor__body">
+                  <ItemEditor draft={draft} setDraft={setDraft} palette={palette} sampling={sampling} setSampling={setSampling} sampleStatus={sampleStatus} />
+                  {closeBlocked && <p className="unsaved-notice" role="status">Spremi ili otkaži promjene prije zatvaranja.</p>}
+                  <div className="viewer-actions viewer-actions--edit">
+                    <button className="secondary-button" type="button" onClick={cancelEditing}>Odustani</button>
+                    <button className="primary-button" type="button" onClick={saveEditing} disabled={!isDirty}>
+                      <Check size={15} weight="bold" aria-hidden="true" /> Spremi promjene
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section className="viewer-danger">
+              <div><strong>Upravljanje komadom</strong><p>Brisanje je odvojeno od uređivanja podataka.</p></div>
+              <div>
+                {hasModeledImage && <button className="delete-button" type="button" disabled={deleting} onClick={() => onDeleteModeled(item.id)}><Trash size={15} /> Obriši stari prikaz na modelu</button>}
+                <button className="delete-button" type="button" disabled={deleting} aria-busy={deleting} onClick={() => onDelete(item.id)}>
+                  {deleting ? <SpinnerGap className="wardrobe-state__spinner" size={15} /> : <Trash size={15} />}
+                  {deleting ? "Brišem…" : "Obriši komad"}
+                </button>
+                {deleteError && <p className="viewer-danger__error" role="alert">{deleteError}</p>}
+              </div>
+            </section>
+          </div>
+        </aside>
+      </div>
+      {lightboxRecord && <LookLightbox look={lightboxRecord} onClose={() => setLightboxRecord(null)} />}
+    </div>
+  );
+}
+
 export function App() {
   const [items, setItems] = useState([]);
   const [activeType, setActiveType] = useState("all");
@@ -733,11 +979,13 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [outfitsOpen, setOutfitsOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState("wardrobe");
   const [usage, setUsage] = useState(null);
   const [referenceConfigured, setReferenceConfigured] = useState(null);
   const [settingsNotice, setSettingsNotice] = useState(null);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [deletingItemId, setDeletingItemId] = useState(null);
+  const [deleteItemError, setDeleteItemError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -784,7 +1032,6 @@ export function App() {
   const openImporter = () => window.dispatchEvent(new Event("wardrobe:add-clothes"));
 
   const openSettings = () => {
-    setOutfitsOpen(false);
     setSettingsOpen(true);
     setSettingsNotice(null);
     setReferenceConfigured(null);
@@ -810,6 +1057,13 @@ export function App() {
 
   const selectedItem = items.find((item) => item.id === selectedId) || null;
 
+  useEffect(() => setDeleteItemError(""), [selectedId]);
+
+  const openSection = (section) => {
+    setActiveSection(section);
+    setSelectedId(null);
+  };
+
   const visibleItems = useMemo(() => {
     const filtered = activeType === "all" ? items : items.filter((item) => item.part === activeType);
     return [...filtered].sort((a, b) => {
@@ -832,20 +1086,26 @@ export function App() {
   };
 
   const deleteItem = async (id) => {
-    if (!window.confirm("Delete this wardrobe item and all of its stored images?")) return;
-    if (id.startsWith("import-")) {
-      try {
+    const item = items.find((candidate) => candidate.id === id);
+    const itemName = item?.name || "ovaj komad";
+    if (!window.confirm(`Trajno obrisati “${itemName}” iz ormara? Obrisat će se zapis i sve njegove spremljene slike. Ovu radnju nije moguće poništiti.`)) return;
+    setDeletingItemId(id);
+    setDeleteItemError("");
+    try {
+      if (id.startsWith("import-")) {
         const response = await fetch(`/api/import/wardrobe/${id}`, { method: "DELETE" });
-        if (!response.ok && response.status !== 404) throw new Error("Could not delete the imported item.");
-      } catch (requestError) {
-        setError(requestError.message);
-        return;
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok && response.status !== 404) throw new Error(body.error || "Komad trenutačno nije moguće obrisati.");
       }
+      setItems((current) => current.filter((candidate) => candidate.id !== id));
+      removePersistedEdit(id);
+      persistDeletedItem(id);
+      setSelectedId(null);
+    } catch (requestError) {
+      setDeleteItemError(requestError.message || "Komad trenutačno nije moguće obrisati.");
+    } finally {
+      setDeletingItemId(null);
     }
-    setItems((current) => current.filter((item) => item.id !== id));
-    removePersistedEdit(id);
-    persistDeletedItem(id);
-    setSelectedId(null);
   };
 
   const addImportedItem = useCallback((newItem) => {
@@ -865,81 +1125,67 @@ export function App() {
   };
 
   return (
-    <div className={`app-shell${selectedItem ? " has-selection" : ""}`}>
+    <div className={`app-shell${selectedItem && activeSection === "wardrobe" ? " has-selection" : ""}`}>
       <header className="site-header">
-        <button className="site-brand" type="button" onClick={() => { setSelectedId(null); setOutfitsOpen(false); }}>
-          <strong>Noa's Wardrobe</strong><span>Private dressing archive</span>
+        <button className="site-brand" type="button" onClick={() => openSection("wardrobe")}>
+          <strong>Noa's Wardrobe</strong><span>Privatni modni arhiv</span>
         </button>
-        <nav className="site-nav" aria-label="Main navigation">
-          <button className="active" type="button" onClick={() => { setSelectedId(null); setOutfitsOpen(false); }}>Wardrobe</button>
-          <button type="button" onClick={() => setOutfitsOpen(true)}>Outfits</button>
-          <button type="button" onClick={() => setOutfitsOpen(true)}>On me</button>
+        <nav className="site-nav" aria-label="Glavna navigacija">
+          <button className={activeSection === "wardrobe" ? "active" : ""} aria-current={activeSection === "wardrobe" ? "page" : undefined} type="button" onClick={() => openSection("wardrobe")}>Ormar</button>
+          <button className={activeSection === "outfits" ? "active" : ""} aria-current={activeSection === "outfits" ? "page" : undefined} type="button" onClick={() => openSection("outfits")}>Kombinacije</button>
+          <button className={activeSection === "looks" ? "active" : ""} aria-current={activeSection === "looks" ? "page" : undefined} type="button" onClick={() => openSection("looks")}>Na meni</button>
         </nav>
         <div className="site-actions">
-          <button className="site-add" type="button" onClick={openImporter}><Plus size={17} weight="bold" /> Add clothes</button>
-          <button type="button" onClick={openSettings} aria-label="Settings"><GearSix size={19} /></button>
-          <button type="button" onClick={logout} aria-label="Log out"><SignOut size={19} /></button>
+          <button type="button" onClick={openSettings} aria-label="Postavke"><GearSix size={19} /></button>
+          <button type="button" onClick={logout} aria-label="Odjava"><SignOut size={19} /></button>
         </div>
       </header>
-      <main className="gallery-pane">
-        <header className="gallery-header">
-          <div className="collection-rule"><span>Collection / 01</span><span>Private &amp; server-stored</span></div>
-          <div className="gallery-meta-row">
-            <div>
-              <p className="private-label">Wardrobe index</p>
-              <h1 className="wardrobe-title">The everyday archive.</h1>
-              <p className="wardrobe-intro">Upload the pieces you actually own, build combinations, then see the chosen look on you.</p>
+      {activeSection === "wardrobe" && (
+        <main className="gallery-pane">
+          <header className="gallery-header">
+            <div className="gallery-meta-row">
+              <div>
+                <p className="private-label">Moja kolekcija</p>
+                <h1 className="wardrobe-title">Ormar</h1>
+                <p className="wardrobe-intro">Brzo pronađi komad, složi kombinaciju ili pogledaj kako ti stoji.</p>
+              </div>
+              <div className="collection-count" aria-label={`${items.length} komada u ormaru`}>
+                <strong>{items.length}</strong>
+                <span>{items.length === 1 ? "komad" : "komada"}</span>
+              </div>
             </div>
-            <div className="collection-count" aria-label={`${items.length} wardrobe pieces`}>
-              <strong>{String(items.length).padStart(2, "0")}</strong>
-              <span>{items.length === 1 ? "piece" : "pieces"}<br />catalogued</span>
+            <div className="wardrobe-actions" aria-label="Radnje ormara">
+              <button className="wardrobe-action wardrobe-action--primary" type="button" onClick={openImporter}><Plus size={17} weight="bold" /> Dodaj odjeću</button>
+              <button className="wardrobe-action" type="button" onClick={() => openSection("outfits")}><Sparkle size={17} /> Složi kombinaciju</button>
+              <p><strong>Možeš odabrati više fotografija odjednom.</strong> Svaki prepoznati komad potvrđuješ prije spremanja.</p>
+              {usage && <span className="usage-pill" title={usage.note}><ChartLine size={15} /> {usageValue(usage, "today", "images")}{usage.dailyImageLimit > 0 ? `/${usage.dailyImageLimit}` : ""} AI generacija danas</span>}
             </div>
-          </div>
-          <div className="wardrobe-actions" aria-label="Wardrobe actions">
-            <button className="wardrobe-action wardrobe-action--primary" type="button" onClick={openImporter}><Plus size={17} weight="bold" /> Add clothes</button>
-            <button className="wardrobe-action" type="button" onClick={() => setOutfitsOpen(true)}><Sparkle size={17} /> Plan outfits</button>
-            <p><strong>You can select several photos at once.</strong> Each detected item waits for your review before it is added.</p>
-            {usage && <span className="usage-pill" title={usage.note}><ChartLine size={15} /> {usageValue(usage, "today", "images")}{usage.dailyImageLimit > 0 ? `/${usage.dailyImageLimit}` : ""} AI images today</span>}
-          </div>
-          <nav className="category-nav" aria-label="Filter wardrobe by item type">
-            {TYPES.map((type) => (
-              <button
-                key={type.id}
-                type="button"
-                className={activeType === type.id ? "active" : ""}
-                onClick={() => chooseType(type.id)}
-                aria-pressed={activeType === type.id}
-              >
-                {type.label}
-              </button>
-            ))}
-          </nav>
-        </header>
+            <nav className="category-nav" aria-label="Filtriraj ormar po kategoriji">
+              {TYPES.map((type) => (
+                <button key={type.id} type="button" className={activeType === type.id ? "active" : ""} onClick={() => chooseType(type.id)} aria-pressed={activeType === type.id}>{type.label}</button>
+              ))}
+            </nav>
+          </header>
 
-        {error && <div className="wardrobe-state wardrobe-state--error"><h2>Wardrobe temporarily unavailable</h2><p>{error}</p><button onClick={retryWardrobe}>Try again</button></div>}
-        {!error && loading && <div className="wardrobe-state"><SpinnerGap className="wardrobe-state__spinner" size={22} /><h2>Loading your wardrobe</h2><p>Reconnecting automatically if the local server is restarting.</p></div>}
-        {!error && !loading && !items.length && <div className="wardrobe-state wardrobe-state--empty"><TShirt size={30} /><h2>Your wardrobe is ready</h2><p>Add one or several clothing photos. You will approve each piece before it is saved.</p><button onClick={openImporter}><Plus size={16} /> Add your first clothes</button></div>}
+          {error && <div className="wardrobe-state wardrobe-state--error"><h2>Ormar trenutačno nije dostupan</h2><p>{error}</p><button onClick={retryWardrobe}>Pokušaj ponovno</button></div>}
+          {!error && loading && <div className="wardrobe-state"><SpinnerGap className="wardrobe-state__spinner" size={22} /><h2>Učitavam ormar</h2><p>Ako se server ponovno pokreće, povezivanje će se automatski nastaviti.</p></div>}
+          {!error && !loading && !items.length && <div className="wardrobe-state wardrobe-state--empty"><TShirt size={30} /><h2>Tvoj ormar je spreman</h2><p>Dodaj jednu ili više fotografija odjeće. Svaki ćeš komad potvrditi prije spremanja.</p><button onClick={openImporter}><Plus size={16} /> Dodaj prve komade</button></div>}
 
-        {!!items.length && (
-          <section className="gallery-grid" aria-label={`${TYPE_MAP[activeType]?.label || "All"} wardrobe items`}>
-            {visibleItems.map((item, index) => (
-              <GalleryItem
-                key={item.id}
-                item={item}
-                index={index}
-                selected={selectedId === item.id}
-                onOpen={setSelectedId}
-              />
-            ))}
-          </section>
-        )}
-      </main>
+          {!!items.length && (
+            <section className="gallery-grid" aria-label={`${TYPE_MAP[activeType]?.label || "Svi"} komadi`}>
+              {visibleItems.map((item, index) => <GalleryItem key={item.id} item={item} index={index} selected={selectedId === item.id} onOpen={setSelectedId} />)}
+            </section>
+          )}
+        </main>
+      )}
 
-      {selectedItem && <ItemViewer item={selectedItem} onClose={() => setSelectedId(null)} onSave={saveItem} onDelete={deleteItem} onDeleteModeled={deleteModeledImage} onOpenSettings={openSettings} />}
+      {activeSection === "outfits" && <Suspense fallback={<div className="section-loading"><SpinnerGap className="wardrobe-state__spinner" size={22} /> Učitavam kombinacije…</div>}><OutfitPlanner embedded items={items} usage={usage} onClose={() => openSection("wardrobe")} onOpenSettings={openSettings} onOpenLooks={() => openSection("looks")} /></Suspense>}
+      {activeSection === "looks" && <LooksCollection onOpenWardrobe={() => openSection("wardrobe")} />}
+
+      {activeSection === "wardrobe" && selectedItem && <ItemViewer item={selectedItem} onClose={() => setSelectedId(null)} onSave={saveItem} onDelete={deleteItem} onDeleteModeled={deleteModeledImage} onOpenSettings={openSettings} deleting={deletingItemId === selectedItem.id} deleteError={deleteItemError} />}
       <Suspense fallback={null}>
         <WardrobeImportFlow onGarmentApproved={addImportedItem} onModeledApproved={attachImportedModeledImage} />
       </Suspense>
-      {outfitsOpen && <Suspense fallback={null}><OutfitPlanner items={items} usage={usage} onClose={() => setOutfitsOpen(false)} onOpenSettings={openSettings} /></Suspense>}
       {settingsOpen && (
         <div className="settings-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSettingsOpen(false)}>
           <section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
