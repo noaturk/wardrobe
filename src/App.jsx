@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Check } from "@phosphor-icons/react/Check";
 import { ChartLine } from "@phosphor-icons/react/ChartLine";
 import { GearSix } from "@phosphor-icons/react/GearSix";
+import { MagnifyingGlass } from "@phosphor-icons/react/MagnifyingGlass";
 import { Plus } from "@phosphor-icons/react/Plus";
 import { Sparkle } from "@phosphor-icons/react/Sparkle";
 import { SpinnerGap } from "@phosphor-icons/react/SpinnerGap";
@@ -10,10 +11,13 @@ import { TShirt } from "@phosphor-icons/react/TShirt";
 import { Trash } from "@phosphor-icons/react/Trash";
 import { Camera } from "@phosphor-icons/react/Camera";
 import { CaretDown } from "@phosphor-icons/react/CaretDown";
+import { CaretLeft } from "@phosphor-icons/react/CaretLeft";
+import { CaretRight } from "@phosphor-icons/react/CaretRight";
 import { X } from "@phosphor-icons/react/X";
 import { OptimizedImage } from "./OptimizedImage.jsx";
 import { IMAGE_ACCEPT, isHeicFile, prepareImageFile } from "./image-files.mjs";
 import { LookLightbox, LooksCollection } from "./looks-collection.jsx";
+import { readStoredManualWeather, readWeatherLocationPreference, writeStoredManualWeather, writeWeatherLocationPreference } from "./weather-preferences.mjs";
 
 const CameraCapture = lazy(() => import("./camera-capture.jsx").then((module) => ({ default: module.CameraCapture })));
 
@@ -22,12 +26,14 @@ const OutfitPlanner = lazy(() => import("./outfit-planner.jsx").then((module) =>
 
 const STORAGE_KEY = "open-wardrobe-edits-v1";
 const DELETED_STORAGE_KEY = "open-wardrobe-deleted-v1";
+const DEFAULT_VIEW_STORAGE_KEY = "open-wardrobe-default-view-v1";
 
 const TYPES = [
   { id: "all", label: "Sve" },
   { id: "upperbody", label: "Gornji dijelovi", singular: "Gornji dio" },
   { id: "wholebody_up", label: "Jakne", singular: "Jakna" },
   { id: "lowerbody", label: "Donji dijelovi", singular: "Donji dio" },
+  { id: "onepiece", label: "Odijela i kompleti", singular: "Cjelovit komad" },
   { id: "accessories_up", label: "Dodaci", singular: "Dodatak" },
   { id: "shoes", label: "Obuća", singular: "Obuća" },
 ];
@@ -38,6 +44,10 @@ const TYPE_ORDER = Object.fromEntries(TYPES.slice(1).map((type, index) => [type.
 function usageValue(usage, period, kind, outcome = "requested") {
   const value = usage?.[period]?.[kind];
   return typeof value === "number" ? (outcome === "requested" ? value : 0) : Number(value?.[outcome] || 0);
+}
+
+function normalizeSearchValue(value = "") {
+  return String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("hr-HR").trim();
 }
 
 
@@ -55,6 +65,8 @@ function persistEdit(item) {
   edits[item.id] = {
     name: item.name || "",
     part: item.part,
+    subcategory: item.subcategory || "",
+    brand: item.brand || "",
     color: item.color || null,
     secondaryColor: item.secondaryColor || null,
     tags: item.tags || [],
@@ -66,6 +78,20 @@ function removePersistedEdit(id) {
   const edits = readEdits();
   delete edits[id];
   localStorage.setItem(STORAGE_KEY, JSON.stringify(edits));
+}
+
+function readDefaultViewPreference() {
+  try {
+    return localStorage.getItem(DEFAULT_VIEW_STORAGE_KEY) === "garment" ? "garment" : "photos";
+  } catch {
+    return "photos";
+  }
+}
+
+function writeDefaultViewPreference(value) {
+  try {
+    localStorage.setItem(DEFAULT_VIEW_STORAGE_KEY, value === "garment" ? "garment" : "photos");
+  } catch { /* localStorage may be unavailable in private browsing */ }
 }
 
 function readDeletedItems() {
@@ -192,8 +218,16 @@ function GalleryItem({ item, selected, onOpen, index }) {
           alt=""
           sizes="(max-width: 520px) calc(50vw - 16px), (max-width: 860px) calc(33vw - 18px), 180px"
           breakpoints={[120, 180, 240, 320, 480]}
+          priority={index < 6}
+          fetchPriority={index < 2 ? "high" : "auto"}
         /></span>
-      <span className="gallery-item__copy"><strong>{item.name || type}</strong><small>{TYPE_MAP[item.part]?.singular || type}</small></span>
+      <span className="gallery-item__copy">
+        <strong>{item.name || type}</strong>
+        <small>
+          {item.color && <i className="gallery-item__swatch" style={{ backgroundColor: item.color }} aria-hidden="true" />}
+          {[item.brand, item.subcategory || TYPE_MAP[item.part]?.singular || type].filter(Boolean).join(" · ")}
+        </small>
+      </span>
     </button>
   );
 }
@@ -320,6 +354,24 @@ function ItemEditor({ draft, setDraft, palette, sampling, setSampling, sampleSta
         <select value={draft.part} onChange={(event) => setDraft((current) => ({ ...current, part: event.target.value }))}>
           {TYPES.slice(1).map((type) => <option value={type.id} key={type.id}>{type.label}</option>)}
         </select>
+      </label>
+
+      <label className="field">
+        <span>Type</span>
+        <input
+          value={draft.subcategory || ""}
+          onChange={(event) => setDraft((current) => ({ ...current, subcategory: event.target.value }))}
+          placeholder="npr. majica, traperice, sako"
+        />
+      </label>
+
+      <label className="field">
+        <span>Brand</span>
+        <input
+          value={draft.brand || ""}
+          onChange={(event) => setDraft((current) => ({ ...current, brand: event.target.value }))}
+          placeholder="npr. Zara, Nike"
+        />
       </label>
 
       <fieldset className="color-field">
@@ -755,11 +807,11 @@ function ItemViewer({ item, onClose, onSave, onDelete, onDeleteModeled, onOpenSe
   const [sampling, setSampling] = useState(null);
   const [sampleStatus, setSampleStatus] = useState("");
   const [palette, setPalette] = useState(item.palette || []);
-  const [draft, setDraft] = useState({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
+  const [draft, setDraft] = useState({ name: item.name || "", part: item.part, subcategory: item.subcategory || "", brand: item.brand || "", color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
   const [shaking, setShaking] = useState(false);
   const [closeBlocked, setCloseBlocked] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
-  const [activeView, setActiveView] = useState(() => item.modeledImage ? "modeled" : "garment");
+  const [activeView, setActiveView] = useState(() => readDefaultViewPreference() === "garment" ? "garment" : "photos");
   const [appearanceRecords, setAppearanceRecords] = useState([]);
   const [activeRecordId, setActiveRecordId] = useState(null);
   const [lightboxRecord, setLightboxRecord] = useState(null);
@@ -771,12 +823,16 @@ function ItemViewer({ item, onClose, onSave, onDelete, onDeleteModeled, onOpenSe
     return JSON.stringify({
       name: draft.name.trim(),
       part: draft.part,
+      subcategory: (draft.subcategory || "").trim(),
+      brand: (draft.brand || "").trim(),
       color: draft.color?.toLowerCase() || null,
       secondaryColor: draft.secondaryColor?.toLowerCase() || null,
       tags: normalizedTags(draft.tags),
     }) !== JSON.stringify({
       name: (item.name || "").trim(),
       part: item.part,
+      subcategory: (item.subcategory || "").trim(),
+      brand: (item.brand || "").trim(),
       color: item.color?.toLowerCase() || null,
       secondaryColor: item.secondaryColor?.toLowerCase() || null,
       tags: normalizedTags(item.tags || []),
@@ -817,10 +873,10 @@ function ItemViewer({ item, onClose, onSave, onDelete, onDeleteModeled, onOpenSe
     setSampling(null);
     setSampleStatus("");
     setPalette(item.palette || []);
-    setDraft({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
-    setActiveView(item.modeledImage ? "modeled" : "garment");
+    setDraft({ name: item.name || "", part: item.part, subcategory: item.subcategory || "", brand: item.brand || "", color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
+    setActiveView(readDefaultViewPreference() === "garment" ? "garment" : "photos");
     setAppearanceRecords([]);
-    setActiveRecordId(null);
+    setActiveRecordId(item.modeledImage ? "modeled" : null);
     setEditorOpen(false);
     setCloseBlocked(false);
   }, [item.id]);
@@ -828,7 +884,7 @@ function ItemViewer({ item, onClose, onSave, onDelete, onDeleteModeled, onOpenSe
   useEffect(() => { if (!isDirty) setCloseBlocked(false); }, [isDirty]);
 
   const cancelEditing = () => {
-    setDraft({ name: item.name || "", part: item.part, color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
+    setDraft({ name: item.name || "", part: item.part, subcategory: item.subcategory || "", brand: item.brand || "", color: item.color || "#9a9286", secondaryColor: item.secondaryColor || null, tags: [...(item.tags || [])] });
     setSampling(null);
     setSampleStatus("");
     setCloseBlocked(false);
@@ -871,19 +927,38 @@ function ItemViewer({ item, onClose, onSave, onDelete, onDeleteModeled, onOpenSe
 
   const handleRecordsChange = useCallback((records) => {
     setAppearanceRecords(records);
-    setActiveRecordId((current) => records.some((record) => record.id === current) ? current : records[0]?.id || null);
-    if (!records.length) setActiveView((current) => current === "on-me" ? (item.modeledImage ? "modeled" : "garment") : current);
+    setActiveRecordId((current) => {
+      if (current === "modeled") return current;
+      if (records.some((record) => record.id === current)) return current;
+      return records[0]?.id ?? (item.modeledImage ? "modeled" : null);
+    });
+    if (!records.length && !item.modeledImage) setActiveView((current) => current === "photos" ? "garment" : current);
   }, [item.modeledImage]);
 
   const openRecord = useCallback((record, fullscreen = true) => {
     setActiveRecordId(record.id);
-    setActiveView("on-me");
+    setActiveView("photos");
     if (fullscreen) setLightboxRecord(record);
   }, []);
 
-  const activeRecord = appearanceRecords.find((record) => record.id === activeRecordId) || appearanceRecords[0] || null;
-  const activePhoto = activeView === "modeled" ? item.modeledImage : activeView === "on-me" ? activeRecord?.image : item.image;
-  const photoAlt = activeView === "modeled" ? `${draft.name || type} na modelu` : activeView === "on-me" ? `${activeRecord?.name || draft.name || type} na meni` : `Čisti prikaz: ${draft.name || type}`;
+  const photoSet = useMemo(() => {
+    const list = [];
+    if (item.modeledImage) list.push({ id: "modeled", image: item.modeledImage, kind: "modeled" });
+    for (const record of appearanceRecords) list.push({ id: record.id, image: record.image, kind: record.source, record });
+    return list;
+  }, [item.modeledImage, appearanceRecords]);
+
+  const activePhotoIndex = Math.max(0, photoSet.findIndex((photo) => photo.id === activeRecordId));
+  const activePhotoEntry = photoSet[activePhotoIndex] || null;
+  const stepPhoto = (delta) => {
+    if (photoSet.length < 2) return;
+    setActiveRecordId(photoSet[(activePhotoIndex + delta + photoSet.length) % photoSet.length].id);
+  };
+
+  const activePhoto = activeView === "photos" ? (activePhotoEntry?.image || item.image) : item.image;
+  const photoAlt = activeView === "photos" && activePhotoEntry
+    ? (activePhotoEntry.kind === "modeled" ? `${draft.name || type} na modelu` : `${activePhotoEntry.record?.name || draft.name || type} na meni`)
+    : `Čisti prikaz: ${draft.name || type}`;
 
   return (
     <div className="viewer-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
@@ -892,7 +967,7 @@ function ItemViewer({ item, onClose, onSave, onDelete, onDeleteModeled, onOpenSe
           <header className="viewer-heading viewer-heading--redesign">
             <div>
               <p className="viewer-heading__meta">
-                <span>{TYPE_MAP[draft.part]?.singular || type}</span>
+                <span>{[draft.brand, draft.subcategory || TYPE_MAP[draft.part]?.singular || type].filter(Boolean).join(" · ")}</span>
                 <span className="viewer-color-swatches" aria-label="Boje komada">
                   {draft.color && <i style={{ backgroundColor: draft.color }} title={`Glavna boja ${draft.color}`} />}
                   {draft.secondaryColor && <i style={{ backgroundColor: draft.secondaryColor }} title={`Dodatna boja ${draft.secondaryColor}`} />}
@@ -907,8 +982,7 @@ function ItemViewer({ item, onClose, onSave, onDelete, onDeleteModeled, onOpenSe
 
           <nav className="viewer-tabs" aria-label="Prikaz fotografije">
             <button type="button" className={activeView === "garment" ? "active" : ""} aria-pressed={activeView === "garment"} onClick={() => setActiveView("garment")}>Komad</button>
-            <button type="button" className={activeView === "modeled" ? "active" : ""} aria-pressed={activeView === "modeled"} onClick={() => setActiveView("modeled")} disabled={!hasModeledImage}>Na modelu</button>
-            <button type="button" className={activeView === "on-me" ? "active" : ""} aria-pressed={activeView === "on-me"} onClick={() => setActiveView("on-me")} disabled={!activeRecord}>Na meni</button>
+            <button type="button" className={activeView === "photos" ? "active" : ""} aria-pressed={activeView === "photos"} onClick={() => setActiveView("photos")} disabled={!photoSet.length}>Fotografije</button>
           </nav>
 
           <div className={`viewer-visual viewer-visual--${activeView}${sampling ? " sampling" : ""}`}>
@@ -920,13 +994,37 @@ function ItemViewer({ item, onClose, onSave, onDelete, onDeleteModeled, onOpenSe
               quality={84}
               priority
               onLoad={activeView === "garment" ? handleImageLoad : undefined}
-              onClick={activeView === "garment" ? handleImageClick : activeView === "on-me" && activeRecord ? () => setLightboxRecord(activeRecord) : undefined}
+              onClick={activeView === "garment" ? handleImageClick : activePhotoEntry?.record ? () => setLightboxRecord(activePhotoEntry.record) : undefined}
             />
             {sampling && <span className="sample-hint">Klikni na odjeću za odabir boje</span>}
+            {activeView === "photos" && photoSet.length > 1 && (
+              <>
+                <div className="viewer-photo-thumbs" role="tablist" aria-label="Odaberi fotografiju">
+                  {photoSet.map((photo) => (
+                    <button
+                      key={photo.id}
+                      type="button"
+                      role="tab"
+                      className={photo.id === activeRecordId ? "active" : ""}
+                      aria-selected={photo.id === activeRecordId}
+                      onClick={() => setActiveRecordId(photo.id)}
+                      aria-label={photo.kind === "modeled" ? "Na modelu" : photo.kind === "ai" ? "AI prikaz" : "Moja fotografija"}
+                    >
+                      <img src={photo.image} alt="" loading="lazy" decoding="async" />
+                    </button>
+                  ))}
+                </div>
+                <button type="button" className="viewer-photo-nav viewer-photo-nav--prev" onClick={() => stepPhoto(-1)} aria-label="Prethodna fotografija">
+                  <CaretLeft size={18} weight="bold" />
+                </button>
+                <button type="button" className="viewer-photo-nav viewer-photo-nav--next" onClick={() => stepPhoto(1)} aria-label="Sljedeća fotografija">
+                  <CaretRight size={18} weight="bold" />
+                </button>
+              </>
+            )}
             {activeView !== "garment" && (
               <button className="viewer-cutout-preview" type="button" onClick={() => setActiveView("garment")} aria-label="Prikaži čisti komad">
                 <OptimizedImage src={item.image} alt="" sizes="120px" breakpoints={[120, 180, 240]} />
-                <span>Čisti komad</span>
               </button>
             )}
           </div>
@@ -975,10 +1073,14 @@ function ItemViewer({ item, onClose, onSave, onDelete, onDeleteModeled, onOpenSe
 export function App() {
   const [items, setItems] = useState([]);
   const [activeType, setActiveType] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [defaultView, setDefaultView] = useState(() => readDefaultViewPreference());
+  const [rememberLocation, setRememberLocation] = useState(() => readWeatherLocationPreference());
+  const [manualWeatherDraft, setManualWeatherDraft] = useState(() => readStoredManualWeather() || { temperature: 18, precipitation: "none", wind: "light" });
   const [activeSection, setActiveSection] = useState("wardrobe");
   const [usage, setUsage] = useState(null);
   const [referenceConfigured, setReferenceConfigured] = useState(null);
@@ -1065,7 +1167,20 @@ export function App() {
   };
 
   const visibleItems = useMemo(() => {
-    const filtered = activeType === "all" ? items : items.filter((item) => item.part === activeType);
+    const query = normalizeSearchValue(searchQuery);
+    const filtered = items.filter((item) => {
+      if (activeType !== "all" && item.part !== activeType) return false;
+      if (!query) return true;
+      const searchable = [
+        item.name,
+        TYPE_MAP[item.part]?.label,
+        TYPE_MAP[item.part]?.singular,
+        item.color,
+        item.secondaryColor,
+        ...(item.tags || []),
+      ].map(normalizeSearchValue).join(" ");
+      return searchable.includes(query);
+    });
     return [...filtered].sort((a, b) => {
       if (activeType === "all") {
         const typeDifference = (TYPE_ORDER[a.part] ?? 99) - (TYPE_ORDER[b.part] ?? 99);
@@ -1073,7 +1188,26 @@ export function App() {
       }
       return a.id.localeCompare(b.id);
     });
-  }, [activeType, items]);
+  }, [activeType, items, searchQuery]);
+
+  const galleryEntries = useMemo(() => {
+    const groupingEnabled = activeType === "all" && !searchQuery;
+    const counts = groupingEnabled
+      ? visibleItems.reduce((map, item) => map.set(item.part, (map.get(item.part) || 0) + 1), new Map())
+      : null;
+    const entries = [];
+    let lastPart = null;
+    let itemIndex = 0;
+    for (const item of visibleItems) {
+      if (groupingEnabled && item.part !== lastPart) {
+        entries.push({ type: "heading", part: item.part, count: counts.get(item.part), key: `heading-${item.part}` });
+        lastPart = item.part;
+      }
+      entries.push({ type: "item", item, index: itemIndex });
+      itemIndex += 1;
+    }
+    return entries;
+  }, [activeType, searchQuery, visibleItems]);
 
   const chooseType = (typeId) => {
     setActiveType(typeId);
@@ -1125,7 +1259,7 @@ export function App() {
   };
 
   return (
-    <div className={`app-shell${selectedItem && activeSection === "wardrobe" ? " has-selection" : ""}`}>
+    <div className={`app-shell${selectedItem && activeSection === "wardrobe" ? " has-selection" : ""}${activeSection === "outfits" ? " app-shell--plain" : ""}`}>
       <header className="site-header">
         <button className="site-brand" type="button" onClick={() => openSection("wardrobe")}>
           <strong>Noa's Wardrobe</strong><span>Privatni modni arhiv</span>
@@ -1155,10 +1289,22 @@ export function App() {
               </div>
             </div>
             <div className="wardrobe-actions" aria-label="Radnje ormara">
-              <button className="wardrobe-action wardrobe-action--primary" type="button" onClick={openImporter}><Plus size={17} weight="bold" /> Dodaj odjeću</button>
-              <button className="wardrobe-action" type="button" onClick={() => openSection("outfits")}><Sparkle size={17} /> Složi kombinaciju</button>
-              <p><strong>Možeš odabrati više fotografija odjednom.</strong> Svaki prepoznati komad potvrđuješ prije spremanja.</p>
-              {usage && <span className="usage-pill" title={usage.note}><ChartLine size={15} /> {usageValue(usage, "today", "images")}{usage.dailyImageLimit > 0 ? `/${usage.dailyImageLimit}` : ""} AI generacija danas</span>}
+              <div className="wardrobe-actions__primary">
+                <button className="wardrobe-action wardrobe-action--primary" type="button" onClick={openImporter}><Plus size={17} weight="bold" /> Dodaj odjeću</button>
+                <button className="wardrobe-action" type="button" onClick={() => openSection("outfits")}><Sparkle size={17} /> Složi kombinaciju</button>
+              </div>
+              <div className="wardrobe-actions__meta">
+                <p><strong>Možeš odabrati više fotografija odjednom.</strong> Svaki prepoznati komad potvrđuješ prije spremanja.</p>
+                {usage && <span className="usage-pill" title={usage.note}><ChartLine size={15} /> {usageValue(usage, "today", "images")}{usage.dailyImageLimit > 0 ? `/${usage.dailyImageLimit}` : ""} AI generacija danas</span>}
+              </div>
+            </div>
+            <div className="wardrobe-search-row">
+              <label className="wardrobe-search">
+                <MagnifyingGlass size={18} aria-hidden="true" />
+                <input type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Pretraži naziv, kategoriju ili tag" autoComplete="off" />
+                {searchQuery && <button type="button" onClick={() => setSearchQuery("")} aria-label="Očisti pretragu"><X size={16} /></button>}
+              </label>
+              <span className="wardrobe-search-status" aria-live="polite">{searchQuery ? `${visibleItems.length} ${visibleItems.length === 1 ? "rezultat" : "rezultata"}` : "Brza pretraga cijele kolekcije"}</span>
             </div>
             <nav className="category-nav" aria-label="Filtriraj ormar po kategoriji">
               {TYPES.map((type) => (
@@ -1171,20 +1317,36 @@ export function App() {
           {!error && loading && <div className="wardrobe-state"><SpinnerGap className="wardrobe-state__spinner" size={22} /><h2>Učitavam ormar</h2><p>Ako se server ponovno pokreće, povezivanje će se automatski nastaviti.</p></div>}
           {!error && !loading && !items.length && <div className="wardrobe-state wardrobe-state--empty"><TShirt size={30} /><h2>Tvoj ormar je spreman</h2><p>Dodaj jednu ili više fotografija odjeće. Svaki ćeš komad potvrditi prije spremanja.</p><button onClick={openImporter}><Plus size={16} /> Dodaj prve komade</button></div>}
 
-          {!!items.length && (
+          {!error && !loading && !!items.length && !visibleItems.length && (
+            <div className="wardrobe-state wardrobe-state--empty">
+              <MagnifyingGlass size={30} />
+              <h2>Nema pronađenih komada</h2>
+              <p>Promijeni pojam pretrage ili odaberi drugu kategoriju.</p>
+              <button type="button" onClick={() => { setSearchQuery(""); setActiveType("all"); }}>Prikaži cijeli ormar</button>
+            </div>
+          )}
+
+          {!!visibleItems.length && (
             <section className="gallery-grid" aria-label={`${TYPE_MAP[activeType]?.label || "Svi"} komadi`}>
-              {visibleItems.map((item, index) => <GalleryItem key={item.id} item={item} index={index} selected={selectedId === item.id} onOpen={setSelectedId} />)}
+              {galleryEntries.map((entry) => entry.type === "heading" ? (
+                <h2 className="gallery-group-heading" key={entry.key}>
+                  <span>{TYPE_MAP[entry.part]?.label || "Komadi"}</span>
+                  <small>{entry.count}</small>
+                </h2>
+              ) : (
+                <GalleryItem key={entry.item.id} item={entry.item} index={entry.index} selected={selectedId === entry.item.id} onOpen={setSelectedId} />
+              ))}
             </section>
           )}
         </main>
       )}
 
       {activeSection === "outfits" && <Suspense fallback={<div className="section-loading"><SpinnerGap className="wardrobe-state__spinner" size={22} /> Učitavam kombinacije…</div>}><OutfitPlanner embedded items={items} usage={usage} onClose={() => openSection("wardrobe")} onOpenSettings={openSettings} onOpenLooks={() => openSection("looks")} /></Suspense>}
-      {activeSection === "looks" && <LooksCollection onOpenWardrobe={() => openSection("wardrobe")} />}
+      {activeSection === "looks" && <LooksCollection onOpenWardrobe={() => openSection("wardrobe")} items={items} />}
 
       {activeSection === "wardrobe" && selectedItem && <ItemViewer item={selectedItem} onClose={() => setSelectedId(null)} onSave={saveItem} onDelete={deleteItem} onDeleteModeled={deleteModeledImage} onOpenSettings={openSettings} deleting={deletingItemId === selectedItem.id} deleteError={deleteItemError} />}
       <Suspense fallback={null}>
-        <WardrobeImportFlow onGarmentApproved={addImportedItem} onModeledApproved={attachImportedModeledImage} />
+        <WardrobeImportFlow launcherVisible={activeSection === "wardrobe"} onGarmentApproved={addImportedItem} onModeledApproved={attachImportedModeledImage} />
       </Suspense>
       {settingsOpen && (
         <div className="settings-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSettingsOpen(false)}>
@@ -1213,6 +1375,60 @@ export function App() {
               if (response.ok) { setReferenceConfigured(false); setSettingsNotice({ tone: "success", text: "Reference photo deleted. Your wardrobe remains unchanged." }); window.dispatchEvent(new Event("wardrobe:setup-refresh")); }
               else setSettingsNotice({ tone: "error", text: "Could not delete the reference photo." });
             }}><Trash size={15} /> Delete reference</button></div>
+            <div className="settings-card">
+              <h3>Prikaz komada u Ormaru</h3>
+              <p>Koji prikaz se prvo otvori kad klikneš na komad odjeće.</p>
+              <div className="settings-toggle-row">
+                <button type="button" className={defaultView === "photos" ? "active" : ""} aria-pressed={defaultView === "photos"} onClick={() => { setDefaultView("photos"); writeDefaultViewPreference("photos"); }}>Kako mi stoji</button>
+                <button type="button" className={defaultView === "garment" ? "active" : ""} aria-pressed={defaultView === "garment"} onClick={() => { setDefaultView("garment"); writeDefaultViewPreference("garment"); }}>Komad</button>
+              </div>
+            </div>
+            <div className="settings-card">
+              <h3>Lokacija za vrijeme</h3>
+              <p>Ako uključiš, Kombinacije će same pokušati dohvatiti vrijeme prema tvojoj lokaciji čim otvoriš stranicu, bez klika na "Koristi moju lokaciju".</p>
+              <label className="settings-checkbox">
+                <input type="checkbox" checked={rememberLocation} onChange={(event) => { setRememberLocation(event.target.checked); writeWeatherLocationPreference(event.target.checked); }} />
+                Zapamti korištenje lokacije za vrijeme
+              </label>
+            </div>
+            <div className="settings-card">
+              <h3>Ručni unos vremena</h3>
+              <p>Približni uvjeti koje Kombinacije koriste kad lokacija nije uključena — spremaju se ovdje pa ih ne moraš unositi svaki put iznova.</p>
+              <div className="settings-weather">
+                <label className="settings-weather__temp">
+                  <span>Temperatura otprilike</span>
+                  <span className="settings-weather__number">
+                    <input type="number" min="-30" max="50" step="1" inputMode="numeric" value={manualWeatherDraft.temperature} onChange={(event) => setManualWeatherDraft((current) => ({ ...current, temperature: event.target.value }))} aria-label="Približna temperatura u Celzijevim stupnjevima" />
+                    <b>°C</b>
+                  </span>
+                </label>
+                <fieldset>
+                  <legend>Oborine</legend>
+                  <div className="settings-weather__segments">
+                    {[{ value: "none", label: "Nema" }, { value: "rain", label: "Kiša" }, { value: "snow", label: "Snijeg" }].map((option) => (
+                      <button key={option.value} type="button" className={manualWeatherDraft.precipitation === option.value ? "active" : ""} aria-pressed={manualWeatherDraft.precipitation === option.value} onClick={() => setManualWeatherDraft((current) => ({ ...current, precipitation: option.value }))}>{option.label}</button>
+                    ))}
+                  </div>
+                </fieldset>
+                <fieldset>
+                  <legend>Vjetar</legend>
+                  <div className="settings-weather__segments">
+                    {[{ value: "light", label: "Slab" }, { value: "moderate", label: "Umjeren" }, { value: "strong", label: "Jak" }].map((option) => (
+                      <button key={option.value} type="button" className={manualWeatherDraft.wind === option.value ? "active" : ""} aria-pressed={manualWeatherDraft.wind === option.value} onClick={() => setManualWeatherDraft((current) => ({ ...current, wind: option.value }))}>{option.label}</button>
+                    ))}
+                  </div>
+                </fieldset>
+              </div>
+              <button type="button" className="reference-camera-button" onClick={() => {
+                const temperature = Number(manualWeatherDraft.temperature);
+                if (!Number.isFinite(temperature) || temperature < -30 || temperature > 50) {
+                  setSettingsNotice({ tone: "error", text: "Unesi temperaturu između −30 i 50 °C." });
+                  return;
+                }
+                writeStoredManualWeather({ temperature, precipitation: manualWeatherDraft.precipitation, wind: manualWeatherDraft.wind });
+                setSettingsNotice({ tone: "success", text: "Ručni uvjeti su spremljeni za Kombinacije." });
+              }}>Spremi ručne uvjete</button>
+            </div>
             {settingsNotice && <p className="settings-notice" data-tone={settingsNotice.tone} role="status" aria-live="polite">{settingsNotice.text}</p>}
             <div className="settings-actions"><a className="secondary-button export-link" href="/api/export">Download wardrobe export</a></div>
             <div className="settings-card danger-zone"><h3>Destructive controls</h3><button className="delete-button" type="button" onClick={async () => {

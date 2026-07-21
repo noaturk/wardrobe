@@ -143,7 +143,8 @@ test("security headers and generic invalid credentials are present", async (t) =
   const login = await agent.get("/auth/login")
     .expect("Referrer-Policy", "same-origin")
     .expect("Content-Security-Policy", /frame-ancestors 'none'/)
-    .expect("Content-Security-Policy", /worker-src 'self' blob:/);
+    .expect("Content-Security-Policy", /worker-src 'self' blob:/)
+    .expect("Content-Security-Policy", /connect-src 'self' https:\/\/api\.open-meteo\.com/);
   await agent.post("/auth/login").type("form").send({
     _csrf: csrfFrom(login.text),
     username: "unknown",

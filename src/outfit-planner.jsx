@@ -1,15 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Camera } from "@phosphor-icons/react/Camera";
+import { CaretDown } from "@phosphor-icons/react/CaretDown";
 import { Check } from "@phosphor-icons/react/Check";
+import { ArrowClockwise } from "@phosphor-icons/react/ArrowClockwise";
+import { CloudRain } from "@phosphor-icons/react/CloudRain";
+import { CloudSun } from "@phosphor-icons/react/CloudSun";
 import { GearSix } from "@phosphor-icons/react/GearSix";
+import { MapPin } from "@phosphor-icons/react/MapPin";
 import { Plus } from "@phosphor-icons/react/Plus";
+import { Snowflake } from "@phosphor-icons/react/Snowflake";
 import { SpinnerGap } from "@phosphor-icons/react/SpinnerGap";
+import { Shuffle } from "@phosphor-icons/react/Shuffle";
 import { Sparkle } from "@phosphor-icons/react/Sparkle";
 import { UploadSimple } from "@phosphor-icons/react/UploadSimple";
+import { Wind } from "@phosphor-icons/react/Wind";
 import { X } from "@phosphor-icons/react/X";
 import { CameraCapture, uploadModelReference } from "./camera-capture.jsx";
-import { IMAGE_ACCEPT, isHeicFile } from "./image-files.mjs";
+import { IMAGE_ACCEPT, isHeicFile, prepareImageFile } from "./image-files.mjs";
 import { CATEGORY_LABELS, buildOutfitSuggestions } from "./outfit-suggestions.mjs";
+import { buildWeatherOutfitSuggestions, fetchCurrentWeather, manualWeatherCurrent, weatherProfile } from "./weather-outfits.mjs";
+import { readStoredManualWeather, readWeatherLocationPreference } from "./weather-preferences.mjs";
 import "./outfit-planner.css";
 
 export { buildOutfitSuggestions } from "./outfit-suggestions.mjs";
@@ -18,6 +28,7 @@ const CATEGORY_NAMES = {
   upperbody: "Gornji dio",
   wholebody_up: "Jakna",
   lowerbody: "Donji dio",
+  onepiece: "Cjelovit komad",
   accessories_up: "Dodatak",
   shoes: "Obuća",
 };
@@ -26,6 +37,7 @@ function categoryName(item) {
   return CATEGORY_NAMES[item.part] || CATEGORY_LABELS[item.part] || "Komad";
 }
 
+
 async function request(path, options) {
   const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...(options?.headers || {}) } });
   const body = response.status === 204 ? null : await response.json().catch(() => ({}));
@@ -33,8 +45,48 @@ async function request(path, options) {
   return body;
 }
 
-function OutfitPieces({ items }) {
-  return <div className="outfit-pieces">{items.map((item) => <figure key={item.id}><img src={item.thumbnail || item.image} alt="" /><figcaption>{item.name || categoryName(item)}</figcaption></figure>)}</div>;
+function OutfitPieces({ items, onSelectPiece }) {
+  return (
+    <div className="outfit-pieces">
+      {items.map((item) => (
+        <figure key={item.id}>
+          <button type="button" className="outfit-pieces__image" onClick={() => onSelectPiece?.(item)} aria-label={`Prikaži ${item.name || categoryName(item)} veće`}>
+            <img src={item.thumbnail || item.image} alt="" loading="lazy" decoding="async" />
+          </button>
+          <figcaption>{item.name || categoryName(item)}</figcaption>
+        </figure>
+      ))}
+    </div>
+  );
+}
+
+function PieceLightbox({ item, onClose }) {
+  useEffect(() => {
+    const onKeyDown = (event) => { if (event.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+  return (
+    <div className="piece-lightbox" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <figure className="piece-lightbox__dialog" role="dialog" aria-modal="true" aria-label={item.name || categoryName(item)}>
+        <button type="button" className="piece-lightbox__close" onClick={onClose} aria-label="Zatvori"><X size={20} /></button>
+        <img src={item.image} alt="" />
+        <figcaption>{item.name || categoryName(item)}</figcaption>
+      </figure>
+    </div>
+  );
+}
+
+function WeatherIcon({ profile, size = 24 }) {
+  const Icon = profile?.snowy ? Snowflake : profile?.rainy ? CloudRain : profile?.windy ? Wind : CloudSun;
+  return <Icon size={size} weight="duotone" aria-hidden="true" />;
+}
+
+function geolocationMessage(error) {
+  if (error?.code === 1) return "Lokacija nije dopuštena. Možeš je odobriti u postavkama preglednika i pokušati ponovno.";
+  if (error?.code === 2) return "Preglednik trenutačno ne može odrediti lokaciju.";
+  if (error?.code === 3) return "Dohvaćanje lokacije traje predugo. Pokušaj ponovno.";
+  return "Lokaciju trenutačno nije moguće dohvatiti.";
 }
 
 // Reference-photo gate: capture a selfie or upload a photo, then try the outfit on yourself.
@@ -106,6 +158,20 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
   const [generatedNow, setGeneratedNow] = useState(0);
   const [manualIds, setManualIds] = useState([]);
   const [generatedResult, setGeneratedResult] = useState(null);
+  const [weatherState, setWeatherState] = useState({ status: "idle", current: null, error: "", source: null });
+  const [manualWeatherOpen, setManualWeatherOpen] = useState(false);
+  const [manualWeather, setManualWeather] = useState({ temperature: 18, precipitation: "none", wind: "light" });
+  const [manualWeatherError, setManualWeatherError] = useState("");
+  const [ownPhotoChoicesOpen, setOwnPhotoChoicesOpen] = useState(false);
+  const [ownPhotoBusy, setOwnPhotoBusy] = useState(false);
+  const [ownPhotoError, setOwnPhotoError] = useState("");
+  const ownPhotoLibraryRef = useRef(null);
+  const ownPhotoCameraRef = useRef(null);
+  const [enlargedPiece, setEnlargedPiece] = useState(null);
+  const currentWeatherProfile = useMemo(() => weatherState.current ? weatherProfile(weatherState.current) : null, [weatherState.current]);
+  const weatherSuggestions = useMemo(() => weatherState.current ? buildWeatherOutfitSuggestions(items, weatherState.current) : [], [items, weatherState.current]);
+  const weatherActive = weatherState.status === "ready" && Boolean(currentWeatherProfile);
+  const activeSuggestions = weatherActive && weatherSuggestions.length ? weatherSuggestions : suggestions;
 
   useEffect(() => {
     request("/api/import/config")
@@ -143,6 +209,31 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
     finally { setGenerating(false); window.dispatchEvent(new Event("wardrobe:usage-refresh")); }
   };
 
+  const uploadOwnCombinationPhoto = async (file) => {
+    if (!file || !selected || ownPhotoBusy) return;
+    setOwnPhotoBusy(true);
+    setOwnPhotoError("");
+    try {
+      const prepared = await prepareImageFile(file);
+      const ids = selected.items.map((item) => item.id).join(",");
+      const response = await fetch(`/api/outfits/photos?itemIds=${encodeURIComponent(ids)}`, {
+        method: "POST",
+        headers: { "Content-Type": prepared.type },
+        body: prepared,
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Fotografiju nije moguće spremiti.");
+      setGeneratedResult(result);
+      setOwnPhotoChoicesOpen(false);
+      setSelected(null);
+      setDirection("");
+    } catch (uploadError) {
+      setOwnPhotoError(uploadError.message);
+    } finally {
+      setOwnPhotoBusy(false);
+    }
+  };
+
   const elapsedLabel = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${String(elapsed % 60).padStart(2, "0")}s`;
   const manualItems = items.filter((item) => manualIds.includes(item.id));
   const toggleManualItem = (item) => {
@@ -153,6 +244,78 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
   const reviewManualOutfit = () => {
     if (!manualItems.length) return;
     setSelected({ id: `manual-${manualItems.map((item) => item.id).join("-")}`, name: "Moja kombinacija", reason: "Komadi koje si sama odabrala. Pregled ne koristi OpenAI.", items: manualItems });
+  };
+
+  const pickRandomSuggestion = () => {
+    if (!items.length) return;
+    const groups = items.reduce((result, item) => {
+      (result[item.part] ||= []).push(item);
+      return result;
+    }, {});
+    const pickOne = (list) => list?.length ? list[Math.floor(Math.random() * list.length)] : null;
+    let picked = [pickOne(groups.upperbody), pickOne(groups.lowerbody)].filter(Boolean);
+    if (Math.random() < 0.65) picked.push(pickOne(groups.wholebody_up));
+    if (Math.random() < 0.65) picked.push(pickOne(groups.shoes));
+    if (Math.random() < 0.5) picked.push(pickOne(groups.accessories_up));
+    picked = [...new Map(picked.filter(Boolean).map((item) => [item.id, item])).values()];
+    if (picked.length < 2) {
+      const shuffled = [...items].sort(() => Math.random() - 0.5);
+      picked = [];
+      for (const item of shuffled) {
+        if (picked.some((existing) => existing.part === item.part)) continue;
+        picked.push(item);
+        if (picked.length === 4) break;
+      }
+    }
+    if (picked.length < 2) return;
+    setSelected({ id: `random-${Date.now()}`, name: "Random kombinacija", reason: "Nasumično odabrani komadi iz tvog ormara. Pregled ne koristi OpenAI.", items: picked });
+  };
+
+  const loadWeatherSuggestions = () => {
+    if (!navigator.geolocation) {
+      setWeatherState({ status: "error", current: null, error: "Ovaj preglednik ne podržava dohvaćanje lokacije.", source: null });
+      setManualWeatherOpen(true);
+      return;
+    }
+    setWeatherState((current) => ({ ...current, status: "loading", error: "" }));
+    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
+      try {
+        const current = await fetchCurrentWeather(coords.latitude, coords.longitude);
+        setWeatherState({ status: "ready", current, error: "", source: "location" });
+      } catch (weatherError) {
+        setWeatherState({ status: "error", current: null, error: weatherError.message, source: null });
+        setManualWeatherOpen(true);
+      }
+    }, (locationError) => {
+      setWeatherState({ status: "error", current: null, error: geolocationMessage(locationError), source: null });
+      setManualWeatherOpen(true);
+    }, { enableHighAccuracy: false, timeout: 10_000, maximumAge: 600_000 });
+  };
+
+  useEffect(() => {
+    if (readWeatherLocationPreference()) {
+      loadWeatherSuggestions();
+    } else {
+      const stored = readStoredManualWeather();
+      if (stored) {
+        try { setWeatherState({ status: "ready", current: manualWeatherCurrent(stored), error: "", source: "manual" }); }
+        catch { /* Ignore a stale/invalid stored value. */ }
+      }
+    }
+    // Runs once on mount only — this auto-fetch should never re-trigger from later re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const applyManualWeather = (event) => {
+    event.preventDefault();
+    try {
+      const current = manualWeatherCurrent(manualWeather);
+      setWeatherState({ status: "ready", current, error: "", source: "manual" });
+      setManualWeatherError("");
+      setManualWeatherOpen(false);
+    } catch (weatherError) {
+      setManualWeatherError(weatherError.message);
+    }
   };
 
   return (
@@ -181,7 +344,7 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
               <strong>Proteklo vrijeme · {elapsedLabel}</strong>
               <small>Možeš otvoriti drugi dio aplikacije; obrada se neće prekinuti.</small>
             </div>
-            <OutfitPieces items={selected.items} />
+            <OutfitPieces items={selected.items} onSelectPiece={setEnlargedPiece} />
           </div>
         ) : selected ? (
           <div className="outfit-selection">
@@ -192,7 +355,7 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
                 <h3>{selected.name}</h3>
                 <span>{selected.reason}</span>
               </div>
-              <OutfitPieces items={selected.items} />
+              <OutfitPieces items={selected.items} onSelectPiece={setEnlargedPiece} />
             </div>
             <label className="outfit-direction">
               <span>Dodatna uputa, nije obavezna</span>
@@ -217,54 +380,161 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
               </div>
             )}
             {referenceNotice && <p className="outfit-reference-notice" role="status">{referenceNotice}</p>}
+
+            <div className={`photo-disclosure${ownPhotoChoicesOpen ? " is-open" : ""}`}>
+              <button className="photo-disclosure__trigger" type="button" onClick={() => setOwnPhotoChoicesOpen((current) => !current)} aria-expanded={ownPhotoChoicesOpen}>
+                <span><Camera size={18} weight="bold" aria-hidden="true" /><span><strong>Uslikaj kako ti stoji</strong><small>Tvoja stvarna fotografija u ovoj kombinaciji. Sprema se privatno, ne koristi OpenAI.</small></span></span>
+                <CaretDown size={17} aria-hidden="true" />
+              </button>
+              {ownPhotoChoicesOpen && (
+                <div className="photo-disclosure__actions">
+                  <button type="button" onClick={() => ownPhotoCameraRef.current?.click()} disabled={ownPhotoBusy}><Camera size={16} /> Fotografiraj se</button>
+                  <button type="button" onClick={() => ownPhotoLibraryRef.current?.click()} disabled={ownPhotoBusy}>Odaberi iz galerije</button>
+                </div>
+              )}
+            </div>
+            {ownPhotoBusy && <p className="outfit-status"><SpinnerGap size={16} className="outfit-spin" /> Spremanje fotografije…</p>}
+            {ownPhotoError && <p className="outfit-error" role="alert">{ownPhotoError}</p>}
+            <input
+              ref={ownPhotoLibraryRef}
+              type="file"
+              accept={IMAGE_ACCEPT}
+              hidden
+              onChange={(event) => { void uploadOwnCombinationPhoto(event.target.files?.[0]); event.target.value = ""; }}
+            />
+            <input
+              ref={ownPhotoCameraRef}
+              type="file"
+              accept="image/*"
+              capture="user"
+              hidden
+              onChange={(event) => { void uploadOwnCombinationPhoto(event.target.files?.[0]); event.target.value = ""; }}
+            />
           </div>
         ) : (
           <>
             {generatedResult && (
               <section className="outfit-complete" role="status">
-                <img src={generatedResult.image} alt="" />
+                <img src={generatedResult.image} alt="" decoding="async" />
                 <div><p>Privatno spremljeno</p><h3>Kombinacija je spremna</h3><span>Rezultat se nalazi u tvojoj zbirci “Na meni”.</span></div>
                 <button type="button" onClick={onOpenLooks}>Otvori Na meni</button>
               </section>
             )}
 
-            <section className="outfit-builder" aria-labelledby="outfit-builder-title">
-              <header>
-                <div><p>Ručno slaganje · bez OpenAI poziva</p><h3 id="outfit-builder-title">Odaberi do 5 komada</h3></div>
-                <span>{manualItems.length}/5 odabrano</span>
-              </header>
-              <div className="outfit-builder__grid">
-                {items.map((item) => {
-                  const chosen = manualIds.includes(item.id);
-                  return (
-                    <button key={item.id} type="button" className={chosen ? "selected" : ""} aria-pressed={chosen} disabled={!chosen && manualIds.length >= 5} onClick={() => toggleManualItem(item)}>
-                      <span className="outfit-builder__check">{chosen ? <Check size={13} weight="bold" /> : <Plus size={13} />}</span>
-                      <img src={item.thumbnail || item.image} alt="" />
-                      <strong>{item.name || categoryName(item)}</strong>
-                      <small>{categoryName(item)}</small>
-                    </button>
-                  );
-                })}
+            <section className={`weather-bar weather-bar--${weatherState.status}`} aria-label="Vrijeme za prijedloge">
+              <div className="weather-bar__row">
+                <div className="weather-bar__status">
+                  <WeatherIcon profile={currentWeatherProfile} size={18} />
+                  {weatherState.status === "ready" && currentWeatherProfile ? (
+                    <span className="weather-bar__reading">
+                      <strong>{Math.round(currentWeatherProfile.temperature)}°</strong>
+                      {currentWeatherProfile.condition} · {weatherState.source === "manual" ? "približni ručni unos" : "osjećaj temperature"} · vjetar {Math.round(currentWeatherProfile.windSpeed)} km/h
+                    </span>
+                  ) : weatherState.status === "loading" ? (
+                    <span className="weather-bar__reading"><SpinnerGap className="outfit-spin" size={14} /> Dohvaćam vrijeme…</span>
+                  ) : weatherState.status === "error" ? (
+                    <span className="weather-bar__reading weather-bar__reading--error">{weatherState.error}</span>
+                  ) : (
+                    <span className="weather-bar__reading">Vrijeme nije postavljeno za prijedloge ispod.</span>
+                  )}
+                </div>
+                <div className="weather-bar__actions">
+                  <button type="button" className="weather-bar__manual-toggle" aria-expanded={manualWeatherOpen} aria-controls="weather-manual-form" onClick={() => { setManualWeatherOpen((current) => !current); setManualWeatherError(""); }}>
+                    Unesi ručno <CaretDown size={13} weight="bold" className={manualWeatherOpen ? "is-open" : ""} aria-hidden="true" />
+                  </button>
+                  <button type="button" className="weather-bar__location" onClick={loadWeatherSuggestions} disabled={weatherState.status === "loading"}>
+                    {weatherState.status === "loading"
+                      ? <SpinnerGap className="outfit-spin" size={14} />
+                      : weatherState.status === "ready" && weatherState.source === "location"
+                        ? <><ArrowClockwise size={14} /> Osvježi</>
+                        : <><MapPin size={14} weight="bold" /> Lokacija</>}
+                  </button>
+                </div>
               </div>
-              <footer>
-                <p>{manualItems.length ? manualItems.map((item) => item.name || categoryName(item)).join(" · ") : "Dodirni komade koje želiš zajedno pregledati."}</p>
-                <button type="button" disabled={!manualItems.length} onClick={reviewManualOutfit}>Pregledaj kombinaciju</button>
-              </footer>
+              {manualWeatherOpen && (
+                <form id="weather-manual-form" className="weather-manual__form" onSubmit={applyManualWeather}>
+                  <label className="weather-manual__temperature">
+                    <span>Temperatura otprilike</span>
+                    <span className="weather-manual__number">
+                      <input
+                        type="number"
+                        min="-30"
+                        max="50"
+                        step="1"
+                        inputMode="numeric"
+                        value={manualWeather.temperature}
+                        onChange={(event) => setManualWeather((current) => ({ ...current, temperature: event.target.value }))}
+                        aria-label="Približna temperatura u Celzijevim stupnjevima"
+                      />
+                      <b>°C</b>
+                    </span>
+                  </label>
+                  <fieldset>
+                    <legend>Oborine</legend>
+                    <div className="weather-manual__segments">
+                      {[{ value: "none", label: "Nema" }, { value: "rain", label: "Kiša" }, { value: "snow", label: "Snijeg" }].map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={manualWeather.precipitation === option.value ? "active" : ""}
+                          aria-pressed={manualWeather.precipitation === option.value}
+                          data-weather-precipitation={option.value}
+                          onClick={() => setManualWeather((current) => ({ ...current, precipitation: option.value }))}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <fieldset>
+                    <legend>Vjetar</legend>
+                    <div className="weather-manual__segments">
+                      {[{ value: "light", label: "Slab" }, { value: "moderate", label: "Umjeren" }, { value: "strong", label: "Jak" }].map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={manualWeather.wind === option.value ? "active" : ""}
+                          aria-pressed={manualWeather.wind === option.value}
+                          data-weather-wind={option.value}
+                          onClick={() => setManualWeather((current) => ({ ...current, wind: option.value }))}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <button className="weather-manual__submit" type="submit">Složi prema unosu</button>
+                  {manualWeatherError && <p className="weather-manual__error" role="alert">{manualWeatherError}</p>}
+                </form>
+              )}
+              {weatherState.status === "idle" && (
+                <p className="weather-bar__privacy">Lokacija se traži tek nakon klika. Koordinate se šalju Open-Meteu radi aktualnog vremena i ne spremaju se u aplikaciju.</p>
+              )}
             </section>
 
             <section className="outfit-intro">
               <div>
                 <p>Brzi početak</p>
                 <h3>Prijedlozi iz tvog ormara</h3>
-                <p>Prijedlozi koriste samo spremljene kategorije i boje. Ne pozivaju OpenAI i ne troše generacije.</p>
+                <p>{weatherActive
+                  ? "Prijedlozi su poredani prema trenutnom vremenu. Ne pozivaju OpenAI i ne troše generacije."
+                  : "Prijedlozi koriste samo spremljene kategorije i boje. Ne pozivaju OpenAI i ne troše generacije."}</p>
               </div>
-              <span>{items.length} komada dostupno</span>
+              <div className="outfit-intro__actions">
+                {weatherActive && currentWeatherProfile && (
+                  <span className="outfit-intro__weather"><WeatherIcon profile={currentWeatherProfile} size={15} /> {Math.round(currentWeatherProfile.temperature)}° · {currentWeatherProfile.condition}</span>
+                )}
+                <span>{items.length} komada dostupno</span>
+                <button type="button" className="outfit-intro__random" disabled={!items.length} onClick={pickRandomSuggestion}>
+                  <Shuffle size={15} weight="bold" /> Odaberi mi random kombinaciju
+                </button>
+              </div>
             </section>
-            {suggestions.length ? (
+            {activeSuggestions.length ? (
               <div className="outfit-suggestions">
-                {suggestions.map((suggestion) => (
+                {activeSuggestions.map((suggestion) => (
                   <article key={suggestion.id}>
-                    <OutfitPieces items={suggestion.items} />
+                    <OutfitPieces items={suggestion.items} onSelectPiece={setEnlargedPiece} />
                     <div>
                       <h3>{suggestion.name}</h3>
                       <p>{suggestion.reason}</p>
@@ -281,6 +551,30 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
                 <button onClick={() => { onClose(); window.dispatchEvent(new Event("wardrobe:add-clothes")); }}>Dodaj još odjeće</button>
               </div>
             )}
+
+            <section className="outfit-builder" aria-labelledby="outfit-builder-title">
+              <header>
+                <div><p>Ručno slaganje · bez OpenAI poziva</p><h3 id="outfit-builder-title">Odaberi do 5 komada</h3></div>
+                <span>{manualItems.length}/5 odabrano</span>
+              </header>
+              <div className="outfit-builder__grid">
+                {items.map((item) => {
+                  const chosen = manualIds.includes(item.id);
+                  return (
+                    <button key={item.id} type="button" className={chosen ? "selected" : ""} aria-pressed={chosen} disabled={!chosen && manualIds.length >= 5} onClick={() => toggleManualItem(item)}>
+                      <span className="outfit-builder__check">{chosen ? <Check size={13} weight="bold" /> : <Plus size={13} />}</span>
+                      <img src={item.thumbnail || item.image} alt="" loading="lazy" decoding="async" />
+                      <strong>{item.name || categoryName(item)}</strong>
+                      <small>{categoryName(item)}</small>
+                    </button>
+                  );
+                })}
+              </div>
+              <footer>
+                <p>{manualItems.length ? manualItems.map((item) => item.name || categoryName(item)).join(" · ") : "Dodirni komade koje želiš zajedno pregledati."}</p>
+                <button type="button" disabled={!manualItems.length} onClick={reviewManualOutfit}>Pregledaj kombinaciju</button>
+              </footer>
+            </section>
           </>
         )}
 
@@ -289,6 +583,7 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
         {usage && <footer className="outfit-usage">Danas pokrenuto: {(typeof usage.today.images === "number" ? usage.today.images : usage.today.images?.requested || 0) + generatedNow}{usage.dailyImageLimit > 0 ? `/${usage.dailyImageLimit}` : ""} image generacija.</footer>}
       </section>
       {retakeOpen && <CameraCapture title="Retake your photo" onClose={() => setRetakeOpen(false)} onSaved={() => { setRetakeOpen(false); markReferenceReady(); }} />}
+      {enlargedPiece && <PieceLightbox item={enlargedPiece} onClose={() => setEnlargedPiece(null)} />}
     </div>
   );
 }

@@ -103,7 +103,7 @@ export function loadConfig(env = process.env, root = process.cwd()) {
     openAIImageQuality: env.OPENAI_IMAGE_QUALITY || "medium",
     maxConcurrentOpenAIJobs: integer(env, "MAX_CONCURRENT_OPENAI_JOBS", 1, { max: 4 }),
     dailyImageLimit: integer(env, "DAILY_IMAGE_GENERATION_LIMIT", 0, { min: 0, max: 100_000 }),
-    openAITimeoutMs: integer(env, "OPENAI_TIMEOUT_MS", 90_000, { min: 5_000, max: 300_000 }),
+    openAITimeoutMs: integer(env, "OPENAI_TIMEOUT_MS", 150_000, { min: 5_000, max: 300_000 }),
     maxUploadBytes: integer(env, "MAX_UPLOAD_MB", 10, { max: 50 }) * 1024 * 1024,
     maxImagePixels: integer(env, "MAX_IMAGE_PIXELS", 40_000_000, { max: 100_000_000 }),
     dataDir,

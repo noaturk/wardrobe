@@ -83,10 +83,12 @@ export function createOutfitRouter(options) {
     limit: options.maxUploadBytes,
   }), async (req, res, next) => {
     try {
-      const itemId = typeof req.query.itemId === "string" ? req.query.itemId : "";
+      const rawIds = typeof req.query.itemIds === "string" ? req.query.itemIds : (typeof req.query.itemId === "string" ? req.query.itemId : "");
+      const ids = [...new Set(rawIds.split(",").map((value) => value.trim()).filter(Boolean))];
+      if (ids.length < 1 || ids.length > 5) return res.status(400).json({ error: "Choose between 1 and 5 wardrobe items" });
       const wardrobe = await loadWardrobe();
-      const selected = wardrobe.find((item) => item.id === itemId);
-      if (!selected) return res.status(404).json({ error: "Wardrobe item not found" });
+      const selected = ids.map((itemId) => wardrobe.find((item) => item.id === itemId)).filter(Boolean);
+      if (selected.length !== ids.length) return res.status(404).json({ error: "One or more wardrobe items no longer exist" });
       const clean = await sanitizeImage(req.body, { maxBytes: options.maxUploadBytes, maxPixels: options.maxImagePixels });
       const id = randomUUID();
       const storageKey = `outfits/${id}.png`;
@@ -94,9 +96,9 @@ export function createOutfitRouter(options) {
       const record = {
         id,
         source: "owner-photo",
-        name: `${selected.name} on me`,
-        itemIds: [selected.id],
-        items: [{ id: selected.id, name: selected.name, part: selected.part, color: selected.color, image: selected.image }],
+        name: selected.length === 1 ? `${selected[0].name} on me` : "My outfit photo",
+        itemIds: ids,
+        items: selected.map(({ id: itemId, name, part, color, image }) => ({ id: itemId, name, part, color, image })),
         storageKey,
         createdAt: new Date().toISOString(),
       };

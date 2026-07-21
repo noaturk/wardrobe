@@ -10,7 +10,7 @@ const ASSET_ROOT = "/api/import/assets";
 const LIBRARY_ASSET_ROOT = "/api/import/library";
 const STAGES = new Set(["crop", "garment", "modeled"]);
 const DECISIONS = new Set(["approve", "reject"]);
-const PARTS = new Set(["upperbody", "wholebody_up", "lowerbody", "accessories_up", "shoes"]);
+const PARTS = new Set(["upperbody", "wholebody_up", "lowerbody", "onepiece", "accessories_up", "shoes"]);
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
 function json(res, status, value) {
@@ -63,6 +63,8 @@ function normalizeMetadata(value = {}) {
   return {
     name: typeof metadata.name === "string" ? metadata.name.trim().slice(0, 120) || "New piece" : "New piece",
     part: PARTS.has(metadata.part) ? metadata.part : "upperbody",
+    subcategory: typeof metadata.subcategory === "string" ? metadata.subcategory.trim().slice(0, 60) : "",
+    brand: typeof metadata.brand === "string" ? metadata.brand.trim().slice(0, 60) : "",
     color,
     secondaryColor,
     tags: Array.isArray(metadata.tags) ? metadata.tags.filter((tag) => typeof tag === "string").map((tag) => tag.trim().toLowerCase().slice(0, 40)).filter(Boolean).slice(0, 12) : [],
@@ -337,10 +339,10 @@ async function openAIAnalyze({ key, baseUrl, model, image, mime, request, record
       body: JSON.stringify({
         model,
         input: [{ role: "user", content: [
-          { type: "input_text", text: "Identify every distinct wearable clothing item visible in this image. A photo may show one isolated garment or a person wearing several items. Return one record per actual item that should enter a wardrobe. Ignore the person's body and non-wearable background objects. For each item, include a tight bounding box around only that item using integer coordinates normalized to a 1000 by 1000 image: x and y are the top-left corner, followed by width and height. Boxes may overlap when garments overlap, but each box must focus on one distinct item. Use only these category ids: upperbody, wholebody_up, lowerbody, accessories_up, shoes. Suggest a concise specific name, primary hex color, optional genuinely distinct secondary hex color, and 1-4 useful lowercase detail tags." },
+          { type: "input_text", text: "Identify every distinct wearable clothing item visible in this image. A photo may show one isolated garment or a person wearing several items. Return one record per actual item that should enter a wardrobe. Ignore the person's body and non-wearable background objects. For each item, include a tight bounding box around only that item using integer coordinates normalized to a 1000 by 1000 image: x and y are the top-left corner, followed by width and height. Boxes may overlap when garments overlap, but each box must focus on one distinct item. Use only these category ids: upperbody, wholebody_up, lowerbody, onepiece, accessories_up, shoes. Use onepiece only for a dress, jumpsuit, suit, tracksuit, or swimsuit that forms a complete look by itself. Suggest a concise specific name, a short specific garment subcategory (for example majica, košulja, pulover, hlače, traperice, jakna, kaput, sako, haljina, kombinezon, odijelo, trenirka, or kupaći kostim — use the closest accurate Croatian term even if none of these match exactly), the visible brand name only if a logo or label is clearly legible (otherwise null), primary hex color, optional genuinely distinct secondary hex color, and 1-4 useful lowercase detail tags." },
           { type: "input_image", image_url: `data:${mime};base64,${image.toString("base64")}` },
         ] }],
-        text: { format: { type: "json_schema", name: "wardrobe_items", strict: true, schema: { type: "object", additionalProperties: false, properties: { items: { type: "array", minItems: 0, maxItems: 8, items: { type: "object", additionalProperties: false, properties: { name: { type: "string" }, part: { type: "string", enum: ["upperbody", "wholebody_up", "lowerbody", "accessories_up", "shoes"] }, color: { type: "string", pattern: "^#[0-9A-Fa-f]{6}$" }, secondaryColor: { anyOf: [{ type: "string", pattern: "^#[0-9A-Fa-f]{6}$" }, { type: "null" }] }, tags: { type: "array", items: { type: "string" }, maxItems: 4 }, boundingBox: { type: "object", additionalProperties: false, properties: { x: { type: "integer", minimum: 0, maximum: 999 }, y: { type: "integer", minimum: 0, maximum: 999 }, width: { type: "integer", minimum: 1, maximum: 1000 }, height: { type: "integer", minimum: 1, maximum: 1000 } }, required: ["x", "y", "width", "height"] } }, required: ["name", "part", "color", "secondaryColor", "tags", "boundingBox"] } } }, required: ["items"] } } },
+        text: { format: { type: "json_schema", name: "wardrobe_items", strict: true, schema: { type: "object", additionalProperties: false, properties: { items: { type: "array", minItems: 0, maxItems: 8, items: { type: "object", additionalProperties: false, properties: { name: { type: "string" }, part: { type: "string", enum: ["upperbody", "wholebody_up", "lowerbody", "onepiece", "accessories_up", "shoes"] }, subcategory: { type: "string" }, brand: { anyOf: [{ type: "string" }, { type: "null" }] }, color: { type: "string", pattern: "^#[0-9A-Fa-f]{6}$" }, secondaryColor: { anyOf: [{ type: "string", pattern: "^#[0-9A-Fa-f]{6}$" }, { type: "null" }] }, tags: { type: "array", items: { type: "string" }, maxItems: 4 }, boundingBox: { type: "object", additionalProperties: false, properties: { x: { type: "integer", minimum: 0, maximum: 999 }, y: { type: "integer", minimum: 0, maximum: 999 }, width: { type: "integer", minimum: 1, maximum: 1000 }, height: { type: "integer", minimum: 1, maximum: 1000 } }, required: ["x", "y", "width", "height"] } }, required: ["name", "part", "subcategory", "brand", "color", "secondaryColor", "tags", "boundingBox"] } } }, required: ["items"] } } },
       }),
     }, "analysis", null, (response) => response.json());
     const outputText = result.output_text || result.output?.flatMap((item) => item.content || []).find((item) => item.type === "output_text")?.text;
@@ -787,6 +789,21 @@ export function wardrobeImportApi(options = {}) {
           stage.error = null;
           stage.assetUrl = previewUrl;
         }
+        await saveJob(job);
+        return json(res, 200, publicJob(job));
+      }
+      if (action === "stages/crop/recrop" && req.method === "POST") {
+        if (job.stages.crop.status !== "review") throw Object.assign(new Error("Crop is not ready for review"), { status: 409 });
+        const input = await body(req);
+        const box = normalizeBoundingBox(input.boundingBox);
+        const original = await readJobAsset(job.id, job.internal.originalFile);
+        const cropped = await cropDetectedItem(original, box);
+        const cropFile = `crop-${Date.now()}.png`;
+        await writeJobAsset(job.id, cropFile, cropped);
+        job.internal.cropFile = cropFile;
+        job.metadata.boundingBox = box;
+        job.stages.crop.assetUrl = `${ASSET_ROOT}/${job.id}/${cropFile}`;
+        job.stages.crop.updatedAt = new Date().toISOString();
         await saveJob(job);
         return json(res, 200, publicJob(job));
       }

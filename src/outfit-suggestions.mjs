@@ -5,6 +5,7 @@ export const CATEGORY_LABELS = {
   upperbody: "top",
   wholebody_up: "jacket",
   lowerbody: "bottom",
+  onepiece: "one-piece",
   accessories_up: "accessory",
   shoes: "shoes",
 };
@@ -41,6 +42,7 @@ export function buildOutfitSuggestions(items) {
   const tops = groups.upperbody || [];
   const bottoms = groups.lowerbody || [];
   const jackets = groups.wholebody_up || [];
+  const onepieces = groups.onepiece || [];
   const shoes = groups.shoes || [];
   const accessories = groups.accessories_up || [];
   const combinations = [];
@@ -61,6 +63,12 @@ export function buildOutfitSuggestions(items) {
       if (jackets.length) add([top, bottom, jackets[offset % jackets.length], shoes[(offset + 1) % Math.max(1, shoes.length)]]);
       if (combinations.length >= 8) break;
     }
+    if (combinations.length >= 8) break;
+  }
+
+  for (const [pieceIndex, piece] of onepieces.entries()) {
+    add([piece, shoes[pieceIndex % Math.max(1, shoes.length)], accessories[pieceIndex % Math.max(1, accessories.length)]]);
+    if (jackets.length) add([piece, jackets[pieceIndex % jackets.length], shoes[(pieceIndex + 1) % Math.max(1, shoes.length)]]);
     if (combinations.length >= 8) break;
   }
 

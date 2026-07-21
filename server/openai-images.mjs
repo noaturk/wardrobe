@@ -149,7 +149,7 @@ export async function editImageWithOpenAI(options) {
         } catch (error) {
           lastError = error;
           if (error.noRetry) throw error;
-          const retrying = attempt < (options.maxAttempts || 3) - 1 && !["AbortError", "TimeoutError"].includes(error.name);
+          const retrying = attempt < (options.maxAttempts || 3) - 1 && error.name !== "AbortError";
           await Promise.resolve(options.onAttempt?.({
             kind: "images", attempt: attempt + 1, status: error.status || response?.status || null, durationMs: Date.now() - startedMs,
             requestId: error.requestId || (response ? requestId(response) : null), cfRay: error.cfRay || response?.headers.get("cf-ray") || null,
