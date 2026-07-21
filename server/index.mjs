@@ -2,6 +2,7 @@ import "dotenv/config";
 import { createServer } from "node:http";
 import { loadConfig } from "./config.mjs";
 import { createApp } from "./app.mjs";
+import { scheduleBackups } from "./backup-schedule.mjs";
 
 function startupStage(event, details = {}) {
   console.log(`[wardrobe] ${event}`, details);
@@ -29,6 +30,8 @@ server.listen(config.port, "0.0.0.0", () => {
   startupStage("server-listening", { port: config.port });
   console.log(`Private Wardrobe listening on port ${config.port}`);
 });
+
+scheduleBackups(process.env);
 
 let shuttingDown = false;
 function shutdown(signal) {

@@ -4,6 +4,11 @@ import path from "node:path";
 import sharp from "sharp";
 import { sanitizeImage } from "../server/images.mjs";
 import { editImageWithOpenAI } from "../server/openai-images.mjs";
+import { averageHash, hammingDistance } from "../server/perceptual-hash.mjs";
+
+// Out of a 64-bit average hash, this is a conservative "probably the same garment" cutoff —
+// low enough to avoid nagging about unrelated items that just happen to share a silhouette.
+const DUPLICATE_HASH_DISTANCE = 10;
 
 const API_ROOT = "/api/import/jobs";
 const ASSET_ROOT = "/api/import/assets";
@@ -377,6 +382,10 @@ export function wardrobeImportApi(options = {}) {
     if (privateStorage) await privateStorage.put(jobKey(id, file), bytes, "image/png");
   }
 
+  async function readLibraryBytes(name) {
+    return privateStorage ? privateStorage.get(libraryKey(name)) : readFile(path.join(libraryAssetDir, name));
+  }
+
   async function readJobAsset(id, file) {
     try { return await readFile(path.join(jobsDir, id, path.basename(file))); }
     catch (error) {
@@ -499,6 +508,38 @@ export function wardrobeImportApi(options = {}) {
     if (metadataStore) return metadataStore.loadImported();
     try { return JSON.parse(await readFile(importedFile, "utf8")); }
     catch (error) { if (error.code === "ENOENT") return []; throw error; }
+  }
+
+  // Cache: item id -> { name, hash }. Existing wardrobe thumbnails don't change once written
+  // (a re-crop or new import gets a new id/filename), so a hash only needs computing once per
+  // process lifetime rather than on every single upload.
+  const wardrobeHashCache = new Map();
+
+  // A soft "does this look like something you already have" check, run once per newly
+  // detected item at upload time — before the owner spends an OpenAI generation on it. Never
+  // blocks the upload: any failure here is logged and treated as "no match found".
+  async function findPossibleDuplicate(croppedImage) {
+    try {
+      const candidateHash = await averageHash(croppedImage);
+      const wardrobe = await loadImported();
+      let best = null;
+      for (const item of wardrobe) {
+        const assetUrl = item.thumbnail || item.image;
+        if (!assetUrl) continue;
+        const name = path.basename(new URL(assetUrl, "http://localhost").pathname);
+        let cached = wardrobeHashCache.get(item.id);
+        if (!cached || cached.name !== name) {
+          cached = { name, hash: await averageHash(await readLibraryBytes(name)) };
+          wardrobeHashCache.set(item.id, cached);
+        }
+        const distance = hammingDistance(candidateHash, cached.hash);
+        if (distance <= DUPLICATE_HASH_DISTANCE && (!best || distance < best.distance)) best = { itemId: item.id, name: item.name, distance };
+      }
+      return best;
+    } catch (error) {
+      console.error("Duplicate check failed, continuing without a warning", { name: error.name, message: error.message });
+      return null;
+    }
   }
 
   async function persistImported(job, includeModeled = false) {
@@ -786,8 +827,7 @@ export function wardrobeImportApi(options = {}) {
       const libraryAssetMatch = url.pathname.match(/^\/api\/import\/library\/([\w.-]+)$/i);
       if (libraryAssetMatch && req.method === "GET") {
         const name = path.basename(libraryAssetMatch[1]);
-        const file = path.join(libraryAssetDir, name);
-        const bytes = privateStorage ? await privateStorage.get(libraryKey(name)) : await readFile(file);
+        const bytes = await readLibraryBytes(name);
         // Garment cutouts/thumbnails stay PNG (need alpha); modeled "on me" photos are stored as JPEG.
         res.setHeader("Content-Type", /\.jpe?g$/i.test(name) ? "image/jpeg" : "image/png");
         res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
@@ -827,9 +867,10 @@ export function wardrobeImportApi(options = {}) {
           const croppedImage = await cropDetectedItem(normalizedImage, metadata.boundingBox);
           await writeJobAsset(id, originalFile, normalizedImage);
           await writeJobAsset(id, cropFile, croppedImage);
+          const possibleDuplicate = await findPossibleDuplicate(croppedImage);
           const now = new Date().toISOString();
           const cropStage = { ...stageState(), status: "review", assetUrl: `${ASSET_ROOT}/${id}/${cropFile}`, updatedAt: now };
-          const job = { id, status: "active", metadata, stages: { crop: cropStage, garment: stageState(), modeled: stageState() }, createdAt: now, updatedAt: now, internal: { originalFile, cropFile, originalMime: "image/png" } };
+          const job = { id, status: "active", metadata, possibleDuplicate, stages: { crop: cropStage, garment: stageState(), modeled: stageState() }, createdAt: now, updatedAt: now, internal: { originalFile, cropFile, originalMime: "image/png" } };
           job.originalAssetUrl = `${ASSET_ROOT}/${id}/${originalFile}`;
           await saveJob(job); jobs.push(publicJob(job));
         }

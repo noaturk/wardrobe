@@ -319,6 +319,11 @@ function ReviewEditor({ job, stage, draft, setDraft, regenPrompt, setRegenPrompt
       <img className="import-editor__preview" src={asset} alt={isCrop ? "Detected item crop" : isGarment ? "Extracted garment" : "Generated modeled look"} />
       <div className="import-fields">
         <p className="import-editor__stage">{isCrop ? "Detected item" : isGarment ? "Garment image" : "Modeled image"}</p>
+        {isCrop && job.possibleDuplicate && (
+          <p className="import-duplicate-warning" role="status">
+            This looks similar to <strong>{job.possibleDuplicate.name || "an item already in your wardrobe"}</strong> you already have saved. Discard this if it's the same piece, or continue if it's actually different.
+          </p>
+        )}
         {isCrop ? <p className="import-card__detail">Check that the complete item is visible. Not quite right? <button type="button" className="import-inline-link" onClick={() => setCropEditing(true)}>Adjust the crop manually</button> — no extra generation used. The next button starts one image generation for its clean cutout; you can keep reviewing other detected items while it runs.</p> : isGarment ? (
           <>
             <div className="import-field"><label htmlFor={`name-${job.id}`}>Name</label><input id={`name-${job.id}`} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></div>

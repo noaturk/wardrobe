@@ -1185,6 +1185,8 @@ export function App() {
         item.name,
         TYPE_MAP[item.part]?.label,
         TYPE_MAP[item.part]?.singular,
+        item.subcategory,
+        item.brand,
         item.color,
         item.secondaryColor,
         ...(item.tags || []),
@@ -1311,7 +1313,7 @@ export function App() {
             <div className="wardrobe-search-row">
               <label className="wardrobe-search">
                 <MagnifyingGlass size={18} aria-hidden="true" />
-                <input type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Pretraži naziv, kategoriju ili tag" autoComplete="off" />
+                <input type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Pretraži naziv, marku, kategoriju ili tag" autoComplete="off" />
                 {searchQuery && <button type="button" onClick={() => setSearchQuery("")} aria-label="Očisti pretragu"><X size={16} /></button>}
               </label>
               <span className="wardrobe-search-status" aria-live="polite">{searchQuery ? `${visibleItems.length} ${visibleItems.length === 1 ? "rezultat" : "rezultata"}` : "Brza pretraga cijele kolekcije"}</span>

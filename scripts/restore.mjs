@@ -27,7 +27,7 @@ try {
   if (entries.length !== 1) throw new Error("Backup archive has an unexpected layout");
   const root = path.join(temporary, entries[0]);
   const manifest = JSON.parse(await readFile(path.join(root, "manifest.json"), "utf8"));
-  if (![1, 2].includes(manifest.format) || manifest.containsSecrets !== false) throw new Error("Backup manifest is not accepted");
+  if (![1, 2, 3].includes(manifest.format) || manifest.containsSecrets !== false) throw new Error("Backup manifest is not accepted");
   const target = path.resolve(process.env.WARDROBE_DATA_DIR || "data");
   const dataSource = path.join(root, "data");
   if (await access(dataSource).then(() => true, () => false)) {
@@ -36,11 +36,19 @@ try {
     console.log(`Restored application data to ${target}`);
   }
   const privateSource = path.join(root, "private-storage");
-  if (manifest.format === 2 && manifest.privateStorage === "external" && await access(privateSource).then(() => true, () => false)) {
+  if ([2, 3].includes(manifest.format) && manifest.privateStorage === "external" && await access(privateSource).then(() => true, () => false)) {
     const privateTarget = path.resolve(process.env.LOCAL_STORAGE_DIR || path.join(target, "private"));
     await rm(privateTarget, { recursive: true, force: true });
     await cp(privateSource, privateTarget, { recursive: true });
     console.log(`Restored private image storage to ${privateTarget}`);
+  }
+  // The database dump (if present) is intentionally not auto-applied — restoring it can
+  // clobber newer live data, so it needs its own deliberate step rather than happening
+  // silently as part of this file-restore.
+  const databaseDump = path.join(root, "database.sql");
+  if (manifest.hasDatabaseDump && await access(databaseDump).then(() => true, () => false)) {
+    console.log(`This backup also includes a database dump. It was NOT restored automatically.`);
+    console.log(`To apply it manually: mysql --host=<host> --user=<user> -p <database> < ${databaseDump}`);
   }
 } finally {
   await rm(temporary, { recursive: true, force: true });
