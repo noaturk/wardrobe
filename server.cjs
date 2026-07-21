@@ -1,3 +1,5 @@
+"use strict";
+
 function logFatal(kind, error) {
   const failure = error instanceof Error ? error : new Error(String(error));
   console.error(`[wardrobe] ${kind}`, {
@@ -17,9 +19,8 @@ process.on("unhandledRejection", (error) => {
   process.exit(1);
 });
 
-try {
-  await import("./server/index.mjs");
-} catch (error) {
+console.log("[wardrobe] Passenger bootstrap loaded");
+import("./server/index.mjs").catch((error) => {
   logFatal("startup failed", error);
   process.exit(1);
-}
+});

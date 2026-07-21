@@ -11,8 +11,8 @@
   "scripts": {
     "dev": "NODE_ENV=development node server/index.mjs",
     "build": "vite build",
-    "start": "NODE_ENV=production node server.js",
-    "check": "node --check server.js && node --check server/index.mjs && node --check server/openai-images.mjs && node --check server/outfits.mjs && node --check scripts/import-job-api.mjs && npm run build && node scripts/check-client-secrets.mjs",
+    "start": "NODE_ENV=production node server.cjs",
+    "check": "node --check server.cjs && node --check server/index.mjs && node --check server/openai-images.mjs && node --check server/outfits.mjs && node --check scripts/import-job-api.mjs && npm run build && node scripts/check-client-secrets.mjs",
     "test": "node --test",
     "auth:hash-password": "node scripts/hash-password.mjs",
     "db:migrate": "node scripts/migrate.mjs",
