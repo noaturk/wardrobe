@@ -122,8 +122,9 @@ test("generating a try-on stores a private image and never leaks the storage key
   assert.equal(listed.body[0].storageKey, undefined);
 
   const image = await agent.get(created.body.image).expect(200);
-  assert.equal(image.headers["content-type"], "image/png");
-  assert.match(image.headers["cache-control"], /no-store/);
+  assert.equal(image.headers["content-type"], "image/jpeg");
+  assert.match(image.headers["cache-control"], /private/);
+  assert.match(image.headers["cache-control"], /immutable/);
   assert.equal(image.headers["x-content-type-options"], "nosniff");
 });
 
@@ -153,7 +154,7 @@ test("owner can attach a real worn photo to one wardrobe item without OpenAI usa
   assert.deepEqual(created.body.itemIds, ["import-a"]);
   assert.equal(calls.length, 0);
   const image = await agent.get(created.body.image).expect(200);
-  assert.equal(image.headers["content-type"], "image/png");
+  assert.equal(image.headers["content-type"], "image/jpeg");
   const usage = await agent.get("/api/usage").expect(200);
   assert.deepEqual(usage.body.today.images, { requested: 0, succeeded: 0, failed: 0 });
 });
@@ -197,12 +198,12 @@ test("deleting the whole wardrobe also removes generated outfits", async (t) => 
   installFetchMock(t);
   const { agent, csrf } = await login(app);
   const created = await agent.post("/api/outfits/generate").set("X-CSRF-Token", csrf).send({ itemIds: ["import-a", "import-b"] }).expect(201);
-  const storageKeyExisted = await storage.exists(`outfits/${created.body.id}.png`);
+  const storageKeyExisted = await storage.exists(`outfits/${created.body.id}.jpg`);
   assert.equal(storageKeyExisted, true);
 
   await agent.delete("/api/data/wardrobe").set("X-CSRF-Token", csrf).set("X-Confirm-Action", "DELETE WARDROBE").expect(204);
 
   await agent.get("/api/outfits").expect(200, []);
   await agent.get(created.body.image).expect(404);
-  assert.equal(await storage.exists(`outfits/${created.body.id}.png`), false);
+  assert.equal(await storage.exists(`outfits/${created.body.id}.jpg`), false);
 });

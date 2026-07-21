@@ -16,13 +16,14 @@ import { CaretRight } from "@phosphor-icons/react/CaretRight";
 import { X } from "@phosphor-icons/react/X";
 import { OptimizedImage } from "./OptimizedImage.jsx";
 import { IMAGE_ACCEPT, isHeicFile, prepareImageFile } from "./image-files.mjs";
-import { LookLightbox, LooksCollection } from "./looks-collection.jsx";
+import { LookLightbox } from "./look-lightbox.jsx";
 import { readStoredManualWeather, readWeatherLocationPreference, writeStoredManualWeather, writeWeatherLocationPreference } from "./weather-preferences.mjs";
 
 const CameraCapture = lazy(() => import("./camera-capture.jsx").then((module) => ({ default: module.CameraCapture })));
 
 const WardrobeImportFlow = lazy(() => import("./import-flow.jsx").then((module) => ({ default: module.WardrobeImportFlow })));
 const OutfitPlanner = lazy(() => import("./outfit-planner.jsx").then((module) => ({ default: module.OutfitPlanner })));
+const LooksCollection = lazy(() => import("./looks-collection.jsx").then((module) => ({ default: module.LooksCollection })));
 
 const STORAGE_KEY = "open-wardrobe-edits-v1";
 const DELETED_STORAGE_KEY = "open-wardrobe-deleted-v1";
@@ -1342,7 +1343,7 @@ export function App() {
       )}
 
       {activeSection === "outfits" && <Suspense fallback={<div className="section-loading"><SpinnerGap className="wardrobe-state__spinner" size={22} /> Učitavam kombinacije…</div>}><OutfitPlanner embedded items={items} usage={usage} onClose={() => openSection("wardrobe")} onOpenSettings={openSettings} onOpenLooks={() => openSection("looks")} /></Suspense>}
-      {activeSection === "looks" && <LooksCollection onOpenWardrobe={() => openSection("wardrobe")} items={items} />}
+      {activeSection === "looks" && <Suspense fallback={<div className="section-loading"><SpinnerGap className="wardrobe-state__spinner" size={22} /> Učitavam Na meni…</div>}><LooksCollection onOpenWardrobe={() => openSection("wardrobe")} items={items} /></Suspense>}
 
       {activeSection === "wardrobe" && selectedItem && <ItemViewer item={selectedItem} onClose={() => setSelectedId(null)} onSave={saveItem} onDelete={deleteItem} onDeleteModeled={deleteModeledImage} onOpenSettings={openSettings} deleting={deletingItemId === selectedItem.id} deleteError={deleteItemError} />}
       <Suspense fallback={null}>

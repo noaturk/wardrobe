@@ -511,16 +511,21 @@ export function wardrobeImportApi(options = {}) {
     const garmentBytes = await readJobAsset(job.id, garmentSource);
     if (privateStorage) await privateStorage.put(libraryKey(garmentName), garmentBytes, "image/png");
     else await copyFile(path.join(jobsDir, job.id, garmentSource), path.join(libraryAssetDir, garmentName));
+    const thumbnailName = `${id}-garment-thumb.png`;
+    const thumbnailBytes = await sharp(garmentBytes).resize(480, 480, { fit: "inside", withoutEnlargement: true }).png().toBuffer();
+    if (privateStorage) await privateStorage.put(libraryKey(thumbnailName), thumbnailBytes, "image/png");
+    else await writeFile(path.join(libraryAssetDir, thumbnailName), thumbnailBytes);
     let modeledImage = null;
     let modeledBytes = null;
     if (includeModeled) {
-      const modeledName = `${id}-modeled.png`;
+      const modeledName = `${id}-modeled.jpg`;
       const modeledSource = job.stages.modeled.assetUrl
         ? path.basename(new URL(job.stages.modeled.assetUrl, "http://localhost").pathname)
         : `modeled-${job.stages.modeled.attempts}.png`;
-      modeledBytes = await readJobAsset(job.id, modeledSource);
-      if (privateStorage) await privateStorage.put(libraryKey(modeledName), modeledBytes, "image/png");
-      else await copyFile(path.join(jobsDir, job.id, modeledSource), path.join(libraryAssetDir, modeledName));
+      const modeledSourceBytes = await readJobAsset(job.id, modeledSource);
+      modeledBytes = await sharp(modeledSourceBytes).rotate().toColorspace("srgb").jpeg({ quality: 90, mozjpeg: true }).toBuffer();
+      if (privateStorage) await privateStorage.put(libraryKey(modeledName), modeledBytes, "image/jpeg");
+      else await writeFile(path.join(libraryAssetDir, modeledName), modeledBytes);
       modeledImage = `${LIBRARY_ASSET_ROOT}/${modeledName}`;
     }
     const metadata = job.metadata || {};
@@ -530,12 +535,14 @@ export function wardrobeImportApi(options = {}) {
       id,
       name: metadata.name || "New piece",
       part: metadata.part || "upperbody",
+      subcategory: metadata.subcategory || "",
+      brand: metadata.brand || "",
       color: metadata.color || "#d8d0c2",
       secondaryColor: metadata.secondaryColor || null,
       palette: [metadata.color, metadata.secondaryColor].filter(Boolean),
       tags: Array.isArray(metadata.tags) ? metadata.tags : [],
       image: `${LIBRARY_ASSET_ROOT}/${garmentName}`,
-      thumbnail: `${LIBRARY_ASSET_ROOT}/${garmentName}`,
+      thumbnail: `${LIBRARY_ASSET_ROOT}/${thumbnailName}`,
       modeledImage: modeledImage || existing?.modeledImage || null,
       importJobId: job.id,
     };
@@ -543,7 +550,8 @@ export function wardrobeImportApi(options = {}) {
     if (metadataStore) {
       await metadataStore.saveImported(record, {
         garment: { key: libraryKey(garmentName), mime: "image/png", bytes: garmentBytes },
-        modeled: modeledBytes ? { key: libraryKey(`${id}-modeled.png`), mime: "image/png", bytes: modeledBytes } : null,
+        thumbnail: { key: libraryKey(thumbnailName), mime: "image/png", bytes: thumbnailBytes },
+        modeled: modeledBytes ? { key: libraryKey(`${id}-modeled.jpg`), mime: "image/jpeg", bytes: modeledBytes } : null,
       });
     } else await atomicJson(importedFile, next);
     return record;
@@ -669,6 +677,9 @@ export function wardrobeImportApi(options = {}) {
           await atomicJson(importedFile, next);
           await Promise.all([
             rm(path.join(libraryAssetDir, `${id}-garment.png`), { force: true }),
+            rm(path.join(libraryAssetDir, `${id}-garment-thumb.png`), { force: true }),
+            // Modeled images were stored as PNG before JPEG conversion; remove either extension.
+            rm(path.join(libraryAssetDir, `${id}-modeled.jpg`), { force: true }),
             rm(path.join(libraryAssetDir, `${id}-modeled.png`), { force: true }),
           ]);
         }
@@ -686,7 +697,10 @@ export function wardrobeImportApi(options = {}) {
           if (key) await privateStorage?.delete(key);
         } else {
           await atomicJson(importedFile, records);
-          await rm(path.join(libraryAssetDir, `${id}-modeled.png`), { force: true });
+          await Promise.all([
+            rm(path.join(libraryAssetDir, `${id}-modeled.jpg`), { force: true }),
+            rm(path.join(libraryAssetDir, `${id}-modeled.png`), { force: true }),
+          ]);
         }
         return json(res, 200, { deleted: true, id, keptGarment: true });
       }
@@ -695,8 +709,9 @@ export function wardrobeImportApi(options = {}) {
         const name = path.basename(libraryAssetMatch[1]);
         const file = path.join(libraryAssetDir, name);
         const bytes = privateStorage ? await privateStorage.get(libraryKey(name)) : await readFile(file);
-        res.setHeader("Content-Type", "image/png");
-        res.setHeader("Cache-Control", "private, no-store");
+        // Garment cutouts/thumbnails stay PNG (need alpha); modeled "on me" photos are stored as JPEG.
+        res.setHeader("Content-Type", /\.jpe?g$/i.test(name) ? "image/jpeg" : "image/png");
+        res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
         res.setHeader("X-Content-Type-Options", "nosniff");
         return res.end(bytes);
       }
@@ -705,7 +720,9 @@ export function wardrobeImportApi(options = {}) {
         const name = path.basename(assetMatch[2]);
         const bytes = await readJobAsset(assetMatch[1], name);
         res.setHeader("Content-Type", name.endsWith(".svg") ? "image/svg+xml" : "image/png");
-        res.setHeader("Cache-Control", "private, no-store");
+        // Every regenerate/recrop writes a new filename (stage attempt or timestamp suffixed),
+        // so a given URL's bytes never change — safe to cache long-term despite the job being transient.
+        res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
         res.setHeader("X-Content-Type-Options", "nosniff");
         return res.end(bytes);
       }

@@ -570,7 +570,7 @@ export function WardrobeImportFlow({ onGarmentApproved, onModeledApproved, launc
           if (!remainingJobs.length) setOpen(false);
         }
         if (action === "regenerate") setRegenerationPrompts((current) => ({ ...current, [`${job.id}:${stage}`]: "" }));
-        if (stage === "modeled" && action === "approve") onModeledApproved?.(job.id, `/api/import/library/import-${job.id}-modeled.png`);
+        if (stage === "modeled" && action === "approve") onModeledApproved?.(job.id, `/api/import/library/import-${job.id}-modeled.jpg`);
       }
     } catch (requestError) {
       if (action === "regenerate" && requestError.status === 409) {

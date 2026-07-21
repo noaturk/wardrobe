@@ -27,6 +27,14 @@ async function normalizePng(bytes) {
   return sharp(bytes).rotate().toColorspace("srgb").png().toBuffer();
 }
 
+async function toJpeg(bytes) {
+  return sharp(bytes).rotate().toColorspace("srgb").jpeg({ quality: 90, mozjpeg: true }).toBuffer();
+}
+
+function contentTypeForKey(key) {
+  return /\.jpe?g$/i.test(key) ? "image/jpeg" : "image/png";
+}
+
 function buildOutfitPrompt(items, direction = "") {
   const list = items.map((item, index) => `Image ${index + 2}: ${item.name} (${item.part}), exact colors ${[item.color, item.secondaryColor].filter(Boolean).join(" and ") || "as shown"}`).join("\n");
   return `Create one realistic full-body vertical editorial fashion photograph.
@@ -72,7 +80,10 @@ export function createOutfitRouter(options) {
       const record = (await loadOutfits()).find((item) => item.id === req.params.id);
       if (!record) return res.status(404).json({ error: "Outfit not found" });
       const bytes = await storage.get(record.storageKey);
-      res.set({ "Content-Type": "image/png", "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" });
+      // Each outfit record gets a fresh randomUUID storage key and is never overwritten in place
+      // (delete removes the record entirely), so a given URL's bytes never change.
+      // Older records were stored as PNG; new ones use JPEG — content type follows the stored key's extension.
+      res.set({ "Content-Type": contentTypeForKey(record.storageKey), "Cache-Control": "private, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" });
       return res.end(bytes);
     } catch (error) { return next(error); }
   });
@@ -89,10 +100,10 @@ export function createOutfitRouter(options) {
       const wardrobe = await loadWardrobe();
       const selected = ids.map((itemId) => wardrobe.find((item) => item.id === itemId)).filter(Boolean);
       if (selected.length !== ids.length) return res.status(404).json({ error: "One or more wardrobe items no longer exist" });
-      const clean = await sanitizeImage(req.body, { maxBytes: options.maxUploadBytes, maxPixels: options.maxImagePixels });
+      const clean = await sanitizeImage(req.body, { maxBytes: options.maxUploadBytes, maxPixels: options.maxImagePixels, output: "jpeg" });
       const id = randomUUID();
-      const storageKey = `outfits/${id}.png`;
-      await storage.put(storageKey, clean.bytes, "image/png");
+      const storageKey = `outfits/${id}.jpg`;
+      await storage.put(storageKey, clean.bytes, "image/jpeg");
       const record = {
         id,
         source: "owner-photo",
@@ -125,7 +136,7 @@ export function createOutfitRouter(options) {
         images.push({ data: bytes, name: `item-${index + 1}.png` });
       }
 
-      const generated = await normalizePng(await editImageWithOpenAI({
+      const generated = await toJpeg(await editImageWithOpenAI({
         key: options.openAIKey,
         baseUrl: options.openAIBaseUrl,
         model: options.imageModel,
@@ -141,8 +152,8 @@ export function createOutfitRouter(options) {
         onAttempt: options.recordOpenAIAttempt,
       }));
       const id = randomUUID();
-      const storageKey = `outfits/${id}.png`;
-      await storage.put(storageKey, generated, "image/png");
+      const storageKey = `outfits/${id}.jpg`;
+      await storage.put(storageKey, generated, "image/jpeg");
       const record = {
         id,
         source: "ai",

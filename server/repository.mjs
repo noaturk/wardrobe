@@ -39,7 +39,7 @@ export class MySqlWardrobeRepository {
   }
 
   async loadImported() {
-    const [items] = await this.pool.query("SELECT id, name, category, primary_color, secondary_color, tags FROM wardrobe_items ORDER BY created_at");
+    const [items] = await this.pool.query("SELECT id, name, category, subcategory, brand, primary_color, secondary_color, tags FROM wardrobe_items ORDER BY created_at");
     if (!items.length) return [];
     const [assets] = await this.pool.query("SELECT wardrobe_item_id, asset_kind, storage_key FROM wardrobe_assets WHERE wardrobe_item_id IS NOT NULL");
     const byItem = new Map();
@@ -54,12 +54,14 @@ export class MySqlWardrobeRepository {
         id: item.id,
         name: item.name,
         part: item.category,
+        subcategory: item.subcategory || "",
+        brand: item.brand || "",
         color: item.primary_color,
         secondaryColor: item.secondary_color,
         palette: [item.primary_color, item.secondary_color].filter(Boolean),
         tags: json(item.tags, []),
         image: assetUrl(owned.garment),
-        thumbnail: assetUrl(owned.garment),
+        thumbnail: assetUrl(owned.thumbnail || owned.garment),
         modeledImage: assetUrl(owned.modeled),
         importJobId: item.id.replace(/^import-/, ""),
       };
@@ -71,8 +73,8 @@ export class MySqlWardrobeRepository {
     try {
       await connection.beginTransaction();
       await connection.execute(
-        "INSERT INTO wardrobe_items (id, name, category, primary_color, secondary_color, tags) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=VALUES(name), category=VALUES(category), primary_color=VALUES(primary_color), secondary_color=VALUES(secondary_color), tags=VALUES(tags)",
-        [record.id, record.name, record.part, record.color, record.secondaryColor, JSON.stringify(record.tags || [])],
+        "INSERT INTO wardrobe_items (id, name, category, subcategory, brand, primary_color, secondary_color, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=VALUES(name), category=VALUES(category), subcategory=VALUES(subcategory), brand=VALUES(brand), primary_color=VALUES(primary_color), secondary_color=VALUES(secondary_color), tags=VALUES(tags)",
+        [record.id, record.name, record.part, record.subcategory || "", record.brand || "", record.color, record.secondaryColor, JSON.stringify(record.tags || [])],
       );
       for (const [kind, asset] of Object.entries(assets)) {
         if (!asset) continue;

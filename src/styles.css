@@ -1468,6 +1468,11 @@ textarea:focus-visible {
 .look-card__image img { display: block; width: 100%; aspect-ratio: 2 / 3; object-fit: contain; transition: transform 220ms ease; }
 .look-card:hover .look-card__image img { transform: scale(1.02); }
 .look-card__image span { position: absolute; left: 10px; bottom: 10px; min-height: 30px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border-radius: 6px; color: var(--paper-bright); background: rgba(23, 23, 23, .88); font-size: 9px; font-weight: 650; letter-spacing: .04em; }
+.look-card__image .look-card__hover-pieces { position: absolute; inset: 0; z-index: 2; left: auto; bottom: auto; display: flex; align-items: flex-end; justify-content: center; gap: 6px; padding: 14px; background: rgba(255, 250, 251, 0); opacity: 0; pointer-events: none; transition: opacity 160ms ease, background-color 160ms ease; }
+.look-card:hover .look-card__hover-pieces,
+.look-card:focus-within .look-card__hover-pieces { opacity: 1; background: rgba(255, 255, 255, .86); }
+.look-card__hover-pieces img { width: 25%; max-width: 76px; aspect-ratio: 3 / 4; object-fit: contain; background: #f3f4f6; border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: 0 6px 14px rgba(23, 23, 23, .14); }
+.look-card:hover .look-card__hover-pieces img { transform: none; }
 .look-card__copy { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 12px; }
 .look-card__copy > div { min-width: 0; }
 .look-card__copy h2 { margin: 0 0 3px; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
