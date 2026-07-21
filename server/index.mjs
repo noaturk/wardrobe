@@ -48,3 +48,14 @@ function shutdown(signal) {
 
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
+
+// Without these, an error that escapes a fire-and-forget async task (e.g. a background
+// image-generation job) crashes the entire process by default, taking down every request
+// in flight until a supervisor restarts it. Log full detail and keep serving; a rejection
+// in one background task should not take the whole app down for everyone.
+process.on("unhandledRejection", (error) => {
+  console.error("Unhandled rejection", { name: error?.name, message: error?.message, stack: error?.stack });
+});
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception", { name: error?.name, message: error?.message, stack: error?.stack });
+});

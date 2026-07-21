@@ -561,12 +561,23 @@ export function wardrobeImportApi(options = {}) {
     const lock = `${job.id}:${stageName}`;
     if (running.has(lock)) return running.get(lock);
     const task = (async () => {
-      const current = await loadJob(job.id);
-      const stage = current.stages[stageName];
-      stage.status = "processing"; stage.phase = "waiting_for_openai"; stage.decision = null; stage.error = null; stage.attempts += 1; stage.startedAt = new Date().toISOString(); stage.updatedAt = stage.startedAt;
-      await saveJob(current);
+      // The caller never awaits this task (`void generate(...)`), so any error that escapes
+      // this function becomes an unhandled promise rejection, which crashes the whole Node
+      // process by default. Every path below must stay inside a try/catch that logs instead
+      // of throwing, including the failure-recording path itself.
+      let current;
+      let stage;
       let failedAssetUrl = null;
       let chromaKeyUsed = null;
+      try {
+        current = await loadJob(job.id);
+        stage = current.stages[stageName];
+        stage.status = "processing"; stage.phase = "waiting_for_openai"; stage.decision = null; stage.error = null; stage.attempts += 1; stage.startedAt = new Date().toISOString(); stage.updatedAt = stage.startedAt;
+        await saveJob(current);
+      } catch (error) {
+        console.error("Failed to start background generation task", { jobId: job.id, stageName, name: error.name, message: error.message, stack: error.stack });
+        return;
+      }
       try {
         const dir = path.join(jobsDir, current.id);
         const output = path.join(dir, `${stageName}-${stage.attempts}.png`);
@@ -643,11 +654,16 @@ export function wardrobeImportApi(options = {}) {
         fresh.stages[stageName].updatedAt = new Date().toISOString();
         await saveJob(fresh);
       } catch (error) {
-        const fresh = await loadJob(current.id);
-        fresh.stages[stageName].status = "failed"; fresh.stages[stageName].phase = "failed"; fresh.stages[stageName].error = error.message; fresh.stages[stageName].updatedAt = new Date().toISOString();
-        if (typeof failedAssetUrl === "string") fresh.stages[stageName].failedAssetUrl = failedAssetUrl;
-        if (chromaKeyUsed) fresh.stages[stageName].chromaKey = chromaKeyUsed;
-        await saveJob(fresh);
+        console.error("Background generation task failed", { jobId: job.id, stageName, name: error.name, message: error.message, stack: error.stack });
+        try {
+          const fresh = await loadJob(current.id);
+          fresh.stages[stageName].status = "failed"; fresh.stages[stageName].phase = "failed"; fresh.stages[stageName].error = error.message; fresh.stages[stageName].updatedAt = new Date().toISOString();
+          if (typeof failedAssetUrl === "string") fresh.stages[stageName].failedAssetUrl = failedAssetUrl;
+          if (chromaKeyUsed) fresh.stages[stageName].chromaKey = chromaKeyUsed;
+          await saveJob(fresh);
+        } catch (recordError) {
+          console.error("Failed to record background generation failure", { jobId: job.id, stageName, name: recordError.name, message: recordError.message, stack: recordError.stack });
+        }
       }
     })().finally(() => running.delete(lock));
     running.set(lock, task);

@@ -410,9 +410,9 @@ export async function createApp(config, options = {}) {
     app.use(vite.middlewares);
   }
 
-  app.use((error, _req, res, _next) => {
+  app.use((error, req, res, _next) => {
     const status = error.status || error.statusCode || (error.type === "entity.too.large" ? 413 : 500);
-    if (status >= 500) console.error("Request failed", { name: error.name, status });
+    if (status >= 500) console.error("Request failed", { method: req.method, path: req.path, name: error.name, message: error.message, stack: error.stack });
     res.status(status).json({ error: status >= 500 && config.production ? "Internal server error" : error.message });
   });
   return app;
