@@ -1,6 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check } from "@phosphor-icons/react/Check";
-import { ChartLine } from "@phosphor-icons/react/ChartLine";
 import { GearSix } from "@phosphor-icons/react/GearSix";
 import { MagnifyingGlass } from "@phosphor-icons/react/MagnifyingGlass";
 import { Plus } from "@phosphor-icons/react/Plus";
@@ -1307,7 +1306,6 @@ export function App() {
               </div>
               <div className="wardrobe-actions__meta">
                 <p><strong>Možeš odabrati više fotografija odjednom.</strong> Svaki prepoznati komad potvrđuješ prije spremanja.</p>
-                {usage && <span className="usage-pill" title={usage.note}><ChartLine size={15} /> {usageValue(usage, "today", "images")}{usage.dailyImageLimit > 0 ? `/${usage.dailyImageLimit}` : ""} AI generacija danas</span>}
               </div>
             </div>
             <div className="wardrobe-search-row">

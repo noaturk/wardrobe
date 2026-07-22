@@ -128,7 +128,7 @@ summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .collection-count strong { font: 470 clamp(52px, 7vw, 92px)/.72 "Poppins", sans-serif; letter-spacing: -.06em; }
 .collection-count span { color: var(--muted); font-size: 9px; line-height: 1.35; letter-spacing: .12em; text-transform: uppercase; }
 .owner-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
-.header-action, .usage-pill { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 8px 11px; border: 1px solid var(--line, #e5e7eb); border-radius: 999px; background: transparent; color: inherit; font: inherit; font-size: 12px; }
+.header-action { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 8px 11px; border: 1px solid var(--line, #e5e7eb); border-radius: 999px; background: transparent; color: inherit; font: inherit; font-size: 12px; }
 .header-action { cursor: pointer; }
 .header-action:focus-visible { outline: 3px solid rgba(79, 70, 229, .28); outline-offset: 2px; }
 .wardrobe-actions { display: flex; align-items: center; gap: 9px; margin-top: 32px; }
@@ -1213,7 +1213,6 @@ textarea:focus-visible {
 .wardrobe-actions__meta { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .wardrobe-actions__meta p { margin: 0; max-width: 460px; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .wardrobe-actions__meta p strong { color: var(--ink); }
-.usage-pill { min-height: 34px; flex: 0 0 auto; margin-left: 0; border-color: var(--line); border-radius: var(--radius-sm); color: var(--olive); background: var(--olive-soft); font-size: 11px; }
 
 .wardrobe-search-row { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .wardrobe-search { width: min(420px, 100%); min-height: 46px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 0 8px 0 13px; color: var(--muted); background: rgba(249, 250, 251, .72); transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease; }
@@ -1574,7 +1573,6 @@ textarea:focus-visible {
   .wardrobe-action { width: 100%; min-width: 0; padding-inline: 9px; }
   .wardrobe-actions__meta { flex-direction: column; align-items: flex-start; gap: 6px; }
   .wardrobe-actions__meta p { max-width: none; }
-  .usage-pill { width: fit-content; }
   .wardrobe-search-row { align-items: stretch; flex-direction: column; gap: 6px; margin-top: 16px; }
   .wardrobe-search { width: 100%; }
   .wardrobe-search-status { min-height: 16px; padding-left: 2px; }
