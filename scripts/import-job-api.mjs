@@ -589,12 +589,9 @@ export function wardrobeImportApi(options = {}) {
     };
     const next = [...records.filter((item) => item.id !== id), record];
     if (metadataStore) {
-      // The "thumbnail" asset kind needs migrations/003_wardrobe_item_details.sql applied first
-      // (extends the wardrobe_assets.asset_kind enum) — until then, inserting one here would
-      // violate the enum constraint and fail the whole import. The thumbnail file itself is
-      // still written to storage above; re-add tracking here once migrated.
       await metadataStore.saveImported(record, {
         garment: { key: libraryKey(garmentName), mime: "image/png", bytes: garmentBytes },
+        thumbnail: { key: libraryKey(thumbnailName), mime: "image/png", bytes: thumbnailBytes },
         modeled: modeledBytes ? { key: libraryKey(`${id}-modeled.jpg`), mime: "image/jpeg", bytes: modeledBytes } : null,
       });
     } else await atomicJson(importedFile, next);
