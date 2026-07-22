@@ -617,13 +617,6 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
               <div>
                 <p>{showingOccasionPicks ? "Prema opisu prilike" : showingWeatherPicks ? "Prema trenutnom vremenu" : "Brzi početak"}</p>
                 <h3>{showingOccasionPicks ? "Prijedlozi za priliku" : showingWeatherPicks ? "Prijedlozi prema vremenu" : "Prijedlozi iz tvog ormara"}</h3>
-                <p>{showingOccasionPicks
-                  ? "Ovi prijedlozi su odabrani prema opisu prilike koji si upisao/la gore. Ne pozivaju OpenAI i ne troše generacije."
-                  : showingWeatherPicks
-                    ? "Ovi prijedlozi stvarno odgovaraju trenutnim uvjetima — ostali komadi u ormaru nisu dovoljno prilagođeni pa nisu prikazani. Ne pozivaju OpenAI i ne troše generacije."
-                    : weatherActive
-                      ? "Nijedna kombinacija iz ormara nije dovoljno prilagođena trenutnom vremenu, pa su prikazani opći prijedlozi. Ne pozivaju OpenAI i ne troše generacije."
-                      : "Prijedlozi koriste samo spremljene kategorije i boje. Ne pozivaju OpenAI i ne troše generacije."}</p>
               </div>
               <div className="outfit-intro__actions">
                 {weatherActive && currentWeatherProfile && (
@@ -638,7 +631,7 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
             {activeSuggestions.length ? (
               <div className="outfit-suggestions">
                 {activeSuggestions.map((suggestion) => (
-                  <article key={suggestion.id} className={suggestion.isWeatherPick || suggestion.isOccasionPick ? (suggestion.isAiOccasionPick ? "outfit-suggestions__ai-pick" : "outfit-suggestions__weather-pick") : undefined}>
+                  <article key={suggestion.id}>
                     <OutfitPieces items={suggestion.items} onSelectPiece={setEnlargedPiece} missingLabel={suggestion.missingPiece} />
                     <div>
                       {suggestion.isWeatherPick && <span className="outfit-suggestions__badge"><WeatherIcon profile={suggestion.weather} size={12} /> Prema vremenu</span>}
