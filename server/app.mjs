@@ -12,6 +12,7 @@ import { MySqlUsageStore, UsageStore, Semaphore } from "./usage.mjs";
 import { createStorage } from "./storage.mjs";
 import { MySqlWardrobeRepository } from "./repository.mjs";
 import { createOutfitRouter } from "./outfits.mjs";
+import { createOccasionBucketsRouter } from "./occasion-buckets.mjs";
 import { wardrobeImportApi } from "../scripts/import-job-api.mjs";
 
 function escapeHtml(value) {
@@ -283,6 +284,18 @@ export async function createApp(config, options = {}) {
   });
   app.use("/api/outfits", (req, res, next) => isStateChanging(req.method) ? requireCsrf(req, res, next) : next());
   app.use(outfitRouter);
+  const occasionBucketsRouter = createOccasionBucketsRouter({
+    dataDir: config.dataDir,
+    metadataStore,
+    usage,
+    openAIKey: config.openAIKey,
+    openAIBaseUrl: config.openAIBaseUrl,
+    model: config.openAIVisionModel,
+    timeoutMs: config.openAITimeoutMs,
+    generateLimiter: uploadLimiter,
+  });
+  app.use("/api/occasion-buckets", (req, res, next) => isStateChanging(req.method) ? requireCsrf(req, res, next) : next());
+  app.use(occasionBucketsRouter);
   app.put("/api/settings/model-reference", uploadLimiter, requireCsrf, express.raw({
     type: ["image/png", "image/jpeg", "image/webp"],
     limit: config.maxUploadBytes,

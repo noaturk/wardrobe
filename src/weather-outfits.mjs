@@ -148,12 +148,14 @@ export function buildWeatherOutfitSuggestions(items, current) {
       const score = combinationWeatherScore(suggestion.items, profile);
       return { suggestion, index, score, missing: missingPieceHint(suggestion.items, profile) };
     })
-    // A net-positive score means the combination already suits the current conditions. A
-    // combo that's merely close — its only gap is the one missing category `missing`
-    // identifies — is still included so it can show a "+" placeholder for what would complete
-    // it, instead of silently disappearing. Anything worse than that isn't honest to label as
-    // a tailored pick.
-    .filter(({ score, missing }) => score > 0 || (missing && score > -6))
+    // A non-negative score means the combination suits the current conditions — on genuinely
+    // mild, clear days nothing scores above 0 either (there's nothing for the weather to
+    // reward), so requiring a strictly positive score meant weather picks never appeared on
+    // the most common kind of day. A combo that's merely close — its only gap is the one
+    // missing category `missing` identifies — is still included so it can show a "+"
+    // placeholder for what would complete it, instead of silently disappearing. Anything
+    // worse than that isn't honest to label as a tailored pick.
+    .filter(({ score, missing }) => score >= 0 || (missing && score > -6))
     .sort((first, second) => second.score - first.score || first.index - second.index)
     .slice(0, 4)
     .map(({ suggestion, score, missing }, index) => ({
@@ -163,6 +165,6 @@ export function buildWeatherOutfitSuggestions(items, current) {
       reason: weatherReason(profile),
       weather: profile,
       isWeatherPick: true,
-      missingPiece: score > 0 ? null : missing,
+      missingPiece: score >= 0 ? null : missing,
     }));
 }

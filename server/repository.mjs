@@ -162,4 +162,31 @@ export class MySqlWardrobeRepository {
       connection.release();
     }
   }
+
+  // AI-generated occasion keyword buckets (see server/occasion-buckets.mjs) — reuses the same
+  // generic app_settings key-value slot as outfit_gallery above, so no schema change is needed.
+  async loadOccasionBuckets() {
+    const [rows] = await this.pool.execute("SELECT setting_value FROM app_settings WHERE setting_key = 'occasion_buckets' LIMIT 1");
+    return rows[0] ? json(rows[0].setting_value, []) : [];
+  }
+
+  async saveOccasionBucket(bucket) {
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute("SELECT setting_value FROM app_settings WHERE setting_key = 'occasion_buckets' FOR UPDATE");
+      const current = rows[0] ? json(rows[0].setting_value, []) : [];
+      const next = [...current.filter((item) => item.id !== bucket.id), bucket];
+      await connection.execute(
+        "INSERT INTO app_settings (setting_key, setting_value) VALUES ('occasion_buckets', ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)",
+        [JSON.stringify(next)],
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
 }

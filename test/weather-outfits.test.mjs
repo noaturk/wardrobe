@@ -37,6 +37,15 @@ test("cold rain prioritizes protective layers", () => {
   assert.match(suggestions[0].reason, /6°C/);
 });
 
+test("mild clear weather still returns tailored picks instead of falling back to generic", () => {
+  // Nothing about mild, clear weather rewards or penalizes any particular piece, so every
+  // combination nets to a score of exactly 0 — this must still count as "suits the weather",
+  // not get excluded for failing to score strictly above 0.
+  const suggestions = buildWeatherOutfitSuggestions(wardrobe, { apparent_temperature: 22, weather_code: 1, precipitation: 0, wind_speed_10m: 8 });
+  assert.ok(suggestions.length > 0);
+  for (const suggestion of suggestions) assert.equal(suggestion.missingPiece, null);
+});
+
 test("current weather request uses rounded coordinates and required variables", async () => {
   let requestedUrl = "";
   const current = await fetchCurrentWeather(46.3057, 16.3366, async (url, options) => {

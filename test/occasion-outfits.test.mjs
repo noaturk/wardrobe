@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildOccasionOutfitSuggestions } from "../src/occasion-outfits.mjs";
+import { buildOccasionOutfitSuggestions, findMatchingBuckets } from "../src/occasion-outfits.mjs";
 
 const item = (id, part, name, tags = []) => ({ id, part, name, tags, color: "#808080", image: `/img/${id}.png` });
 
@@ -38,4 +38,13 @@ test("a gym session favors sport pieces over formal pieces", () => {
   const firstIds = suggestions[0].items.map((piece) => piece.id);
   assert.ok(firstIds.includes("joggers") || firstIds.includes("sneakers"));
   assert.ok(!firstIds.includes("blazer"));
+});
+
+test("a learned custom bucket is used for matching and scoring", () => {
+  const customBuckets = [{ id: "occ-1", trigger: ["koncert"], boost: ["casual", "tenisic"], penalty: ["formal"], source: "ai" }];
+  assert.equal(findMatchingBuckets("nepoznat opis", []).length, 0);
+  assert.equal(findMatchingBuckets("idem na koncert", customBuckets).length, 1);
+  const suggestions = buildOccasionOutfitSuggestions(wardrobe, "idem na koncert", customBuckets);
+  assert.ok(suggestions.length > 0);
+  assert.ok(suggestions[0].isAiOccasionPick);
 });

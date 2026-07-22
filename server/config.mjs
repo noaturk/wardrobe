@@ -99,6 +99,7 @@ export function loadConfig(env = process.env, root = process.cwd()) {
     } : null),
     openAIKey: env.OPENAI_API_KEY || "",
     openAIBaseUrl: openAIBaseUrl.toString().replace(/\/$/, ""),
+    openAIVisionModel: env.OPENAI_VISION_MODEL || "gpt-5.4-mini",
     openAIImageModel: env.OPENAI_IMAGE_MODEL || "gpt-image-2",
     openAIImageQuality: env.OPENAI_IMAGE_QUALITY || "medium",
     // Full-outfit try-on (Kombinacije) can be tuned independently of the import pipeline's

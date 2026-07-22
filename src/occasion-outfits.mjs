@@ -45,9 +45,12 @@ const OCCASION_BUCKETS = [
 
 const NAMES = ["Najbolje za priliku", "Alternativa za priliku", "Još jedna opcija", "Dodatni izbor"];
 
-function matchingBuckets(occasionText) {
-  const text = occasionText.toLocaleLowerCase("hr-HR");
-  return OCCASION_BUCKETS.filter((bucket) => includesAny(text, bucket.trigger));
+// customBuckets are additional { trigger, boost, penalty } buckets learned from past OpenAI
+// fallback calls (see server/occasion-buckets.mjs) — merged in so a phrase only ever needs to
+// go to OpenAI once, not on every future use.
+export function findMatchingBuckets(occasionText, customBuckets = []) {
+  const text = (occasionText || "").toLocaleLowerCase("hr-HR");
+  return [...OCCASION_BUCKETS, ...customBuckets].filter((bucket) => includesAny(text, bucket.trigger));
 }
 
 function itemOccasionScore(item, buckets) {
@@ -61,11 +64,12 @@ function combinationOccasionScore(items, buckets) {
   return items.reduce((total, item) => total + itemOccasionScore(item, buckets), 0);
 }
 
-export function buildOccasionOutfitSuggestions(items, occasionText) {
+export function buildOccasionOutfitSuggestions(items, occasionText, customBuckets = []) {
   const trimmed = (occasionText || "").trim();
   if (!trimmed) return [];
-  const buckets = matchingBuckets(trimmed);
+  const buckets = findMatchingBuckets(trimmed, customBuckets);
   if (!buckets.length) return [];
+  const isAiMatch = buckets.some((bucket) => bucket.source === "ai");
   return buildOutfitSuggestions(items)
     .map((suggestion, index) => ({ suggestion, index, score: combinationOccasionScore(suggestion.items, buckets) }))
     .filter(({ score }) => score > 0)
@@ -77,5 +81,6 @@ export function buildOccasionOutfitSuggestions(items, occasionText) {
       name: NAMES[index % NAMES.length],
       reason: `Odabrano prema opisu: "${trimmed}".`,
       isOccasionPick: true,
+      isAiOccasionPick: isAiMatch,
     }));
 }

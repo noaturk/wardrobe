@@ -19,7 +19,7 @@ import { CameraCapture, uploadModelReference } from "./camera-capture.jsx";
 import { IMAGE_ACCEPT, isHeicFile, prepareImageFile } from "./image-files.mjs";
 import { CATEGORY_LABELS, buildOutfitSuggestions } from "./outfit-suggestions.mjs";
 import { buildWeatherOutfitSuggestions, fetchCurrentWeather, manualWeatherCurrent, weatherProfile } from "./weather-outfits.mjs";
-import { buildOccasionOutfitSuggestions } from "./occasion-outfits.mjs";
+import { buildOccasionOutfitSuggestions, findMatchingBuckets } from "./occasion-outfits.mjs";
 import { readStoredManualWeather, readWeatherLocationPreference } from "./weather-preferences.mjs";
 import "./outfit-planner.css";
 
@@ -201,12 +201,40 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
   const ownPhotoCameraRef = useRef(null);
   const [enlargedPiece, setEnlargedPiece] = useState(null);
   const [occasionText, setOccasionText] = useState("");
+  const [customOccasionBuckets, setCustomOccasionBuckets] = useState([]);
+  const [occasionAiStatus, setOccasionAiStatus] = useState("idle"); // idle | checking | failed
   const currentWeatherProfile = useMemo(() => weatherState.current ? weatherProfile(weatherState.current) : null, [weatherState.current]);
   const weatherSuggestions = useMemo(() => weatherState.current ? buildWeatherOutfitSuggestions(items, weatherState.current) : [], [items, weatherState.current]);
   const weatherActive = weatherState.status === "ready" && Boolean(currentWeatherProfile);
   const showingWeatherPicks = weatherActive && weatherSuggestions.length > 0;
-  const occasionSuggestions = useMemo(() => buildOccasionOutfitSuggestions(items, occasionText), [items, occasionText]);
+  const occasionSuggestions = useMemo(() => buildOccasionOutfitSuggestions(items, occasionText, customOccasionBuckets), [items, occasionText, customOccasionBuckets]);
   const showingOccasionPicks = occasionSuggestions.length > 0;
+
+  useEffect(() => {
+    request("/api/occasion-buckets").then(setCustomOccasionBuckets).catch(() => {});
+  }, []);
+
+  // A description that doesn't match any known occasion (built-in or previously learned) is
+  // sent to OpenAI once, after the owner pauses typing, to generate a reusable keyword bucket
+  // — learned buckets are then matched locally forever after, so the same phrase never costs
+  // a second call.
+  useEffect(() => {
+    const trimmed = occasionText.trim();
+    if (trimmed.length < 3 || findMatchingBuckets(trimmed, customOccasionBuckets).length) { setOccasionAiStatus("idle"); return undefined; }
+    let cancelled = false;
+    setOccasionAiStatus("checking");
+    const timer = setTimeout(async () => {
+      try {
+        const result = await request("/api/occasion-buckets/generate", { method: "POST", body: JSON.stringify({ description: trimmed }) });
+        if (cancelled) return;
+        setCustomOccasionBuckets(result.buckets || []);
+        setOccasionAiStatus("idle");
+      } catch {
+        if (!cancelled) setOccasionAiStatus("failed");
+      }
+    }, 900);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [occasionText, customOccasionBuckets]);
   const activeSuggestions = showingOccasionPicks ? occasionSuggestions : showingWeatherPicks ? weatherSuggestions : suggestions;
 
   useEffect(() => {
@@ -574,7 +602,13 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
                 placeholder="npr. poslovni sastanak, izlazak navečer, teretana…"
                 maxLength={120}
               />
-              {occasionText.trim() && !showingOccasionPicks && (
+              {occasionAiStatus === "checking" && (
+                <p className="occasion-bar__ai-status"><SpinnerGap className="outfit-spin" size={13} /> Ovaj opis ne prepoznajem — pitam AI za prijedlog (koristi jednu analizu).</p>
+              )}
+              {occasionAiStatus === "failed" && (
+                <p className="occasion-bar__empty">AI trenutačno ne može pomoći s ovim opisom. Pokušaj preformulirati ili budi konkretniji.</p>
+              )}
+              {occasionAiStatus === "idle" && occasionText.trim() && !showingOccasionPicks && (
                 <p className="occasion-bar__empty">Nema dovoljno prepoznatljivih komada za ovaj opis — ispod su prikazani drugi prijedlozi.</p>
               )}
             </section>
@@ -604,11 +638,11 @@ export function OutfitPlanner({ items, usage, onClose, onOpenSettings, onOpenLoo
             {activeSuggestions.length ? (
               <div className="outfit-suggestions">
                 {activeSuggestions.map((suggestion) => (
-                  <article key={suggestion.id} className={suggestion.isWeatherPick || suggestion.isOccasionPick ? "outfit-suggestions__weather-pick" : undefined}>
+                  <article key={suggestion.id} className={suggestion.isWeatherPick || suggestion.isOccasionPick ? (suggestion.isAiOccasionPick ? "outfit-suggestions__ai-pick" : "outfit-suggestions__weather-pick") : undefined}>
                     <OutfitPieces items={suggestion.items} onSelectPiece={setEnlargedPiece} missingLabel={suggestion.missingPiece} />
                     <div>
                       {suggestion.isWeatherPick && <span className="outfit-suggestions__badge"><WeatherIcon profile={suggestion.weather} size={12} /> Prema vremenu</span>}
-                      {suggestion.isOccasionPick && <span className="outfit-suggestions__badge">Za priliku</span>}
+                      {suggestion.isOccasionPick && <span className={`outfit-suggestions__badge${suggestion.isAiOccasionPick ? " outfit-suggestions__badge--ai" : ""}`}>{suggestion.isAiOccasionPick && <Sparkle size={12} weight="fill" />} Za priliku</span>}
                       <h3>{suggestion.name}</h3>
                       <p>{suggestion.reason}{suggestion.missingPiece && <> Nedostaje: <strong>{suggestion.missingPiece}</strong>.</>}</p>
                       <small>{suggestion.items.map((item) => item.name || categoryName(item)).join(" · ")}</small>
