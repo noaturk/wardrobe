@@ -8,9 +8,10 @@ Fotografiraj svoju odjeću. Dobiješ uredan katalog svakog komada i kombinacije 
 [![Node 22](https://img.shields.io/badge/node-22-191919?style=flat-square)](package.json)
 [![React 19](https://img.shields.io/badge/react-19-191919?style=flat-square)](package.json)
 
-Fork projekta [tandpfun/wardrobe](https://github.com/tandpfun/wardrobe), preraden u privatnu produkcijsku aplikaciju.
+Fork projekta [tandpfun/wardrobe](https://github.com/tandpfun/wardrobe), prerađen u privatnu produkcijsku aplikaciju za osobne potrebe.
 
 </div>
+<img width="1920" height="1080" alt="projekti_slike (6)" src="https://github.com/user-attachments/assets/eb03c3ff-84d0-4b62-be40-fbd82e0567b7" />
 
 Wardrobe pretvara fotografije odjeće s mobitela u pregledan ormar. Svaka fotografija
 se pregleda i na njoj se pronađu pojedinačni komadi, svaki komad se izreže u čistu
@@ -23,11 +24,14 @@ sve stranice, API rute i slike iza prijave — ništa se ne poslužuje s javne a
 Sučelje je na hrvatskom, a kod i dokumentacija na engleskom.
 
 ## Tri ekrana
+<img width="1470" height="800" alt="image" src="https://github.com/user-attachments/assets/da2280a7-4433-41b9-9c0c-4d50b8efd282" />
 
 **Ormar.** Sve što imaš, razvrstano po kategorijama: gornji dijelovi, jakne,
 donji dijelovi, odijela i kompleti, dodaci i obuća. Pretraga ide po nazivima i
 markama, svaki komad se otvara s detaljima, a aplikacija se može dodati na
 početni zaslon mobitela i raditi preko cijelog ekrana.
+
+<img width="1470" height="800" alt="image" src="https://github.com/user-attachments/assets/65770d68-00f6-4162-8d99-210a088bfd04" />
 
 **Kombinacije.** Cjelovite kombinacije složene od komada koje stvarno imaš, na
 dva načina. *Prema vremenu:* aktualna prognoza s Open-Meteo servisa za tvoju
@@ -35,6 +39,8 @@ lokaciju ili spremljeni ručni uvjeti kad lokaciju ne želiš dijeliti —
 temperatura, kiša i vjetar mijenjaju izbor. *Prema prigodi:* opišeš svojim
 riječima kamo ideš, a aplikacija to poveže s tvojom bibliotekom. Oboje radi
 isključivo nad tvojim podacima, bez ijednog AI poziva i bez troška.
+
+<img width="946" height="519" alt="image" src="https://github.com/user-attachments/assets/dbef281b-ad82-4521-b174-773c374492c0" />
 
 **Na meni.** Dva načina da vidiš komad na sebi umjesto položenog: AI proba
 generirana iz privatne referentne fotografije koju jednom postaviš u Postavkama,
