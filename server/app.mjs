@@ -406,7 +406,9 @@ export async function createApp(config, options = {}) {
       res.json({ deleted });
     } catch (error) { next(error); }
   });
-  app.use("/api/import", (req, res, next) => isStateChanging(req.method) ? uploadLimiter(req, res, next) : next());
+  // Import actions are already private, authenticated and CSRF-protected. Applying the
+  // upload limiter to the whole workflow also throttled harmless approve/delete clicks,
+  // making a larger batch impossible to finish after 30 actions.
   app.use("/api/import", (req, res, next) => isStateChanging(req.method) ? requireCsrf(req, res, next) : next());
   app.use(importApi.handler);
 

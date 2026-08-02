@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import request from "supertest";
@@ -164,6 +164,16 @@ test("import status polling is not consumed by the upload rate limiter", async (
   }
 });
 
+test("authenticated import workflow actions are not blocked after 30 clicks", async (t) => {
+  const { root, app } = await fixture({ recordOpenAIAttempt: () => undefined });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { agent, csrf } = await login(app);
+  const missingId = "00000000-0000-0000-0000-000000000000";
+  for (let index = 0; index < 40; index += 1) {
+    await agent.delete(`/api/import/jobs/${missingId}`).set("X-CSRF-Token", csrf).expect(404, { error: "Job not found" });
+  }
+});
+
 test("a failed OpenAI image request stores attempt diagnostics and one logical failed usage", async (t) => {
   const attemptLog = [];
   const { root, app, config } = await fixture({ recordOpenAIAttempt: (entry) => attemptLog.push(entry) });
@@ -263,4 +273,33 @@ test("retry is rejected while the same generation is already running", async (t)
   await agent.post(endpoint).set("X-CSRF-Token", csrf).send({}).expect(409, { error: "Generation is already in progress" });
   release();
   await waitForJob(agent, id, (job) => ["review", "failed"].includes(job.stages.garment.status));
+});
+
+test("deleting an in-flight generation cleanly cancels its final write", async (t) => {
+  const { root, app, config } = await fixture({ recordOpenAIAttempt: () => undefined });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const id = await seedFailedGarmentJob(config);
+  const generated = await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 180, g: 40, b: 30 } } }).png().toBuffer();
+  const originalFetch = globalThis.fetch;
+  const originalConsoleError = console.error;
+  const errors = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  globalThis.fetch = async () => {
+    await gate;
+    return new Response(JSON.stringify({ data: [{ b64_json: generated.toString("base64") }] }), { status: 200, headers: { "Content-Type": "application/json", "x-request-id": "req-cancelled" } });
+  };
+  console.error = (...args) => errors.push(args);
+  t.after(() => { globalThis.fetch = originalFetch; console.error = originalConsoleError; });
+
+  const { agent, csrf } = await login(app);
+  await agent.post(`/api/import/jobs/${id}/stages/garment/regenerate`).set("X-CSRF-Token", csrf).send({}).expect(202);
+  await waitForJob(agent, id, (job) => job.stages.garment.status === "processing");
+  await agent.delete(`/api/import/jobs/${id}`).set("X-CSRF-Token", csrf).expect(200, { deleted: true, id });
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  await agent.get(`/api/import/jobs/${id}`).expect(404, { error: "Job not found" });
+  await assert.rejects(stat(path.join(config.dataDir, "jobs", id)), { code: "ENOENT" });
+  assert.equal(errors.length, 0, errors.map((entry) => entry[0]).join("\n"));
 });

@@ -712,9 +712,21 @@ export function wardrobeImportApi(options = {}) {
   }
 
   async function finalizeStageSuccess(current, stageName, output, bytes, chromaKeyUsed) {
-    await writeJobAsset(current.id, path.basename(output), bytes);
     const fresh = await loadJob(current.id);
-    const freshStage = fresh.stages[stageName];
+    // The owner may remove a queued item while its already-started OpenAI request is
+    // finishing. That is a successful cancellation, not a generation failure, and it
+    // must not recreate assets or dereference a job that no longer exists.
+    if (!fresh) {
+      // The generation may already have written its diagnostic source image after the
+      // delete request removed the job directory. Remove that orphan without touching
+      // any persisted wardrobe item or another active import.
+      await rm(path.join(jobsDir, current.id), { recursive: true, force: true });
+      await privateStorage?.deletePrefix(`jobs/${current.id}`);
+      return;
+    }
+    const freshStage = fresh.stages?.[stageName];
+    if (!freshStage) return;
+    await writeJobAsset(current.id, path.basename(output), bytes);
     freshStage.status = "review";
     freshStage.phase = "ready_for_review";
     freshStage.assetUrl = `${ASSET_ROOT}/${fresh.id}/${path.basename(output)}`;
@@ -734,7 +746,11 @@ export function wardrobeImportApi(options = {}) {
     console.error("Background generation task failed", { jobId, stageName, name: error.name, message: error.message, stack: error.stack });
     try {
       const fresh = await loadJob(jobId);
-      const freshStage = fresh.stages[stageName];
+      // Deleting an in-flight job is an intentional cancellation. There is no failure
+      // state left to record once the job has gone.
+      if (!fresh) return;
+      const freshStage = fresh.stages?.[stageName];
+      if (!freshStage) return;
       freshStage.status = "failed"; freshStage.phase = "failed"; freshStage.error = error.message; freshStage.updatedAt = new Date().toISOString();
       if (typeof error.failedAssetUrl === "string") freshStage.failedAssetUrl = error.failedAssetUrl;
       if (error.chromaKeyUsed) freshStage.chromaKey = error.chromaKeyUsed;

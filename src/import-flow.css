@@ -242,6 +242,7 @@
 .import-status.is-processing::before { animation: import-pulse 1.2s ease-in-out infinite; }
 .import-status.is-complete { color: #16a34a; }
 .import-status.is-error { color: #dc2626; }
+.import-status--prominent { margin: 0; padding: 10px 12px; border: 1px solid rgba(220, 38, 38, .25); border-radius: 10px; background: rgba(254, 226, 226, .58); }
 
 .import-card-list { display: grid; gap: 10px; }
 .import-editor__stage {
@@ -300,6 +301,7 @@
 .import-cleanup-strength input[type="range"] { padding-inline: 0; border: 0; accent-color: var(--import-ink); }
 .import-cleanup-scale { display: flex; justify-content: space-between; gap: 16px; color: var(--import-muted); font-size: 10px; }
 .import-fields { display: grid; gap: 14px; align-content: start; }
+.import-editor__item-title { margin: -8px 0 2px; font-size: clamp(18px, 2vw, 24px); line-height: 1.2; font-weight: 600; }
 .import-field { display: grid; gap: 6px; }
 .import-field label { color: var(--import-muted); font-size: 11px; }
 .import-field input,
