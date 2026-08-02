@@ -196,7 +196,7 @@ export async function createApp(config, options = {}) {
     return next();
   });
   app.get("/health", (_req, res) => {
-    res.set("X-Wardrobe-Frontend", frontendBuild ? "ready" : "development");
+    res.set("X-Wardrobe-Frontend", frontendBuild ? "preloaded" : "development");
     return res.status(200).json({ status: "ok" });
   });
   app.use(session({

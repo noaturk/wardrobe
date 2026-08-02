@@ -101,7 +101,7 @@ test("health is public while application, API and images are private", async (t)
   t.after(() => rm(root, { recursive: true, force: true }));
   await request(app).get("/health")
     .expect(200, { status: "ok" })
-    .expect("X-Wardrobe-Frontend", "ready");
+    .expect("X-Wardrobe-Frontend", "preloaded");
   await request(app).get("/").expect(401).expect("Cache-Control", /no-store/);
   await request(app).get("/api/import/wardrobe").expect(401);
   await request(app).get("/api/import/library/anything.png").expect(401);
@@ -115,7 +115,7 @@ test("preloaded frontend remains available if the entry file becomes unavailable
 
   await request(app).get("/health")
     .expect(200, { status: "ok" })
-    .expect("X-Wardrobe-Frontend", "ready");
+    .expect("X-Wardrobe-Frontend", "preloaded");
   await agent.get("/")
     .expect(200)
     .expect("Content-Type", /html/)
