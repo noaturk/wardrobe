@@ -133,6 +133,12 @@ function requireCsrf(req, res, next) {
 
 export async function createApp(config, options = {}) {
   const startupStage = (event, details = {}) => globalThis.__wardrobeStartupDiagnostic?.(event, details);
+  const frontendBuild = config.production || options.serveBuild
+    ? {
+        directory: path.join(config.root, "dist"),
+        html: await readFile(path.join(config.root, "dist", "index.html"), "utf8"),
+      }
+    : null;
   const app = express();
   startupStage("session-store-initializing");
   const sessionStore = options.sessionStore || await createSessionStore(config);
@@ -189,16 +195,8 @@ export async function createApp(config, options = {}) {
     if (config.production && !allowed.has(host)) return res.status(400).send("Invalid host");
     return next();
   });
-  app.get("/health", async (_req, res) => {
-    if (config.production || options.serveBuild) {
-      const frontendReady = await stat(path.join(config.root, "dist", "index.html"))
-        .then((entry) => entry.isFile())
-        .catch(() => false);
-      res.set("X-Wardrobe-Frontend", frontendReady ? "ready" : "missing");
-      if (!frontendReady) return res.status(503).json({ status: "degraded" });
-    } else {
-      res.set("X-Wardrobe-Frontend", "development");
-    }
+  app.get("/health", (_req, res) => {
+    res.set("X-Wardrobe-Frontend", frontendBuild ? "ready" : "development");
     return res.status(200).json({ status: "ok" });
   });
   app.use(session({
@@ -423,12 +421,10 @@ export async function createApp(config, options = {}) {
   app.use("/api/import", (req, res, next) => isStateChanging(req.method) ? requireCsrf(req, res, next) : next());
   app.use(importApi.handler);
 
-  if (config.production || options.serveBuild) {
-    const dist = path.join(config.root, "dist");
-    app.use(express.static(dist, { index: false, etag: true, maxAge: 0, setHeaders: (res) => res.setHeader("Cache-Control", "private, no-store") }));
-    app.get("/{*path}", async (_req, res, next) => {
-      try { res.set("Cache-Control", "private, no-store").sendFile(path.join(dist, "index.html")); }
-      catch (error) { next(error); }
+  if (frontendBuild) {
+    app.use(express.static(frontendBuild.directory, { index: false, etag: true, maxAge: 0, setHeaders: (res) => res.setHeader("Cache-Control", "private, no-store") }));
+    app.get("/{*path}", (_req, res) => {
+      res.set("Cache-Control", "private, no-store").status(200).type("html").send(frontendBuild.html);
     });
   } else {
     const { createServer } = await import("vite");

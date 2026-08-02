@@ -107,14 +107,19 @@ test("health is public while application, API and images are private", async (t)
   await request(app).get("/api/import/library/anything.png").expect(401);
 });
 
-test("health reports when the production frontend build is missing", async (t) => {
+test("preloaded frontend remains available if the entry file becomes unavailable", async (t) => {
   const { root, app } = await fixture();
   t.after(() => rm(root, { recursive: true, force: true }));
   await rm(path.join(root, "dist", "index.html"));
+  const { agent } = await login(app);
 
   await request(app).get("/health")
-    .expect(503, { status: "degraded" })
-    .expect("X-Wardrobe-Frontend", "missing");
+    .expect(200, { status: "ok" })
+    .expect("X-Wardrobe-Frontend", "ready");
+  await agent.get("/")
+    .expect(200)
+    .expect("Content-Type", /html/)
+    .expect((response) => assert.match(response.text, /<title>Private app<\/title>/));
 });
 
 test("authenticated root serves the production frontend build", async (t) => {
