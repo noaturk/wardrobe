@@ -189,7 +189,18 @@ export async function createApp(config, options = {}) {
     if (config.production && !allowed.has(host)) return res.status(400).send("Invalid host");
     return next();
   });
-  app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
+  app.get("/health", async (_req, res) => {
+    if (config.production || options.serveBuild) {
+      const frontendReady = await stat(path.join(config.root, "dist", "index.html"))
+        .then((entry) => entry.isFile())
+        .catch(() => false);
+      res.set("X-Wardrobe-Frontend", frontendReady ? "ready" : "missing");
+      if (!frontendReady) return res.status(503).json({ status: "degraded" });
+    } else {
+      res.set("X-Wardrobe-Frontend", "development");
+    }
+    return res.status(200).json({ status: "ok" });
+  });
   app.use(session({
     name: config.sessionCookieName,
     secret: config.sessionSecret,

@@ -59,7 +59,10 @@ process.on("unhandledRejection", (error) => {
 
 diagnostic("passenger-bootstrap-loaded", { cwd: process.cwd(), launchCwd, applicationRoot: __dirname });
 console.log(`[wardrobe] Passenger bootstrap loaded; diagnostics: ${startupLogPath}`);
-import("./server/index.mjs").catch((error) => {
-  logFatal("startup failed", error);
-  process.exit(1);
-});
+import("./server/frontend-build.mjs")
+  .then(({ ensureFrontendBuild }) => ensureFrontendBuild(__dirname, { onEvent: diagnostic }))
+  .then(() => import("./server/index.mjs"))
+  .catch((error) => {
+    logFatal("startup failed", error);
+    process.exit(1);
+  });

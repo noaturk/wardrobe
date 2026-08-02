@@ -99,10 +99,22 @@ async function waitForJob(agent, id, predicate, timeoutMs = 4_000) {
 test("health is public while application, API and images are private", async (t) => {
   const { root, app } = await fixture();
   t.after(() => rm(root, { recursive: true, force: true }));
-  await request(app).get("/health").expect(200, { status: "ok" });
+  await request(app).get("/health")
+    .expect(200, { status: "ok" })
+    .expect("X-Wardrobe-Frontend", "ready");
   await request(app).get("/").expect(401).expect("Cache-Control", /no-store/);
   await request(app).get("/api/import/wardrobe").expect(401);
   await request(app).get("/api/import/library/anything.png").expect(401);
+});
+
+test("health reports when the production frontend build is missing", async (t) => {
+  const { root, app } = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await rm(path.join(root, "dist", "index.html"));
+
+  await request(app).get("/health")
+    .expect(503, { status: "degraded" })
+    .expect("X-Wardrobe-Frontend", "missing");
 });
 
 test("authenticated root serves the production frontend build", async (t) => {
