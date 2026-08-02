@@ -3,6 +3,12 @@
 const { appendFileSync, mkdirSync } = require("node:fs");
 const path = require("node:path");
 
+// Passenger is free to launch this entry point from a directory other than the
+// deployed application root. Keep dotenv and every relative production path
+// anchored to the directory that actually contains this file.
+const launchCwd = process.cwd();
+process.chdir(__dirname);
+
 const startupLogDirectory = path.join(__dirname, "tmp");
 const startupLogPath = path.join(startupLogDirectory, "wardrobe-startup.log");
 
@@ -51,7 +57,7 @@ process.on("unhandledRejection", (error) => {
   process.exit(1);
 });
 
-diagnostic("passenger-bootstrap-loaded", { cwd: process.cwd() });
+diagnostic("passenger-bootstrap-loaded", { cwd: process.cwd(), launchCwd, applicationRoot: __dirname });
 console.log(`[wardrobe] Passenger bootstrap loaded; diagnostics: ${startupLogPath}`);
 import("./server/index.mjs").catch((error) => {
   logFatal("startup failed", error);

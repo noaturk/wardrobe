@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { createServer } from "node:http";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.mjs";
 import { createApp } from "./app.mjs";
 import { scheduleBackups } from "./backup-schedule.mjs";
@@ -9,9 +10,14 @@ function startupStage(event, details = {}) {
   globalThis.__wardrobeStartupDiagnostic?.(event, details);
 }
 
-startupStage("server-module-loaded", { cwd: process.cwd(), node: process.version });
-const config = loadConfig(process.env, process.cwd());
+// Resolve from this module instead of the process working directory. Managed
+// hosts such as Passenger may start Node elsewhere, which previously made the
+// authenticated SPA look for dist/index.html in the wrong directory.
+const applicationRoot = fileURLToPath(new URL("../", import.meta.url));
+startupStage("server-module-loaded", { cwd: process.cwd(), applicationRoot, node: process.version });
+const config = loadConfig(process.env, applicationRoot);
 startupStage("configuration-loaded", {
+  applicationRoot: config.root,
   production: config.production,
   port: config.port,
   storageDriver: config.storageDriver,

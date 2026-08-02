@@ -105,6 +105,18 @@ test("health is public while application, API and images are private", async (t)
   await request(app).get("/api/import/library/anything.png").expect(401);
 });
 
+test("authenticated root serves the production frontend build", async (t) => {
+  const { root, app } = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { agent } = await login(app);
+
+  await agent.get("/")
+    .expect(200)
+    .expect("Content-Type", /html/)
+    .expect("Cache-Control", /no-store/)
+    .expect((response) => assert.match(response.text, /<title>Private app<\/title>/));
+});
+
 test("login rotates the session, CSRF protects writes, and logout destroys it", async (t) => {
   const { root, app } = await fixture();
   t.after(() => rm(root, { recursive: true, force: true }));
