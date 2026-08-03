@@ -1,4 +1,4 @@
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DeleteObjectsCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -20,14 +20,16 @@ export class StorageAdapter {
 }
 
 export class LocalPrivateStorage extends StorageAdapter {
-  constructor(root) {
+  constructor(root, fallbackRoots = []) {
     super();
     this.root = path.resolve(root);
+    this.roots = [...new Set([this.root, ...fallbackRoots.map((candidate) => path.resolve(candidate))])];
   }
 
-  resolve(key) {
-    const target = path.resolve(this.root, safeKey(key));
-    if (!target.startsWith(`${this.root}${path.sep}`)) throw new Error("Storage path escaped its root");
+  resolve(key, root = this.root) {
+    const resolvedRoot = path.resolve(root);
+    const target = path.resolve(resolvedRoot, safeKey(key));
+    if (!target.startsWith(`${resolvedRoot}${path.sep}`)) throw new Error("Storage path escaped its root");
     return target;
   }
 
@@ -39,11 +41,20 @@ export class LocalPrivateStorage extends StorageAdapter {
   }
 
   async get(key) {
-    return readFile(this.resolve(key));
+    let missingError;
+    for (const root of this.roots) {
+      try { return await readFile(this.resolve(key, root)); }
+      catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        missingError = error;
+      }
+    }
+    throw missingError;
   }
 
   createReadStream(key) {
-    return createReadStream(this.resolve(key));
+    const existing = this.roots.map((root) => this.resolve(key, root)).find((target) => existsSync(target));
+    return createReadStream(existing || this.resolve(key));
   }
 
   async delete(key) {
@@ -51,8 +62,11 @@ export class LocalPrivateStorage extends StorageAdapter {
   }
 
   async exists(key) {
-    try { return (await stat(this.resolve(key))).isFile(); }
-    catch (error) { if (error.code === "ENOENT") return false; throw error; }
+    for (const root of this.roots) {
+      try { if ((await stat(this.resolve(key, root))).isFile()) return true; }
+      catch (error) { if (error.code !== "ENOENT") throw error; }
+    }
+    return false;
   }
 
   async deletePrefix(prefix) {
@@ -119,7 +133,7 @@ export class S3CompatiblePrivateStorage extends StorageAdapter {
 export function createStorage(config) {
   return config.storageDriver === "s3"
     ? new S3CompatiblePrivateStorage(config.s3)
-    : new LocalPrivateStorage(config.localStorageDir);
+    : new LocalPrivateStorage(config.localStorageDir, config.localStorageFallbackDirs);
 }
 
 export { safeKey };

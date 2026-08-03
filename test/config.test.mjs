@@ -38,7 +38,22 @@ test("production accepts an explicit private sibling storage directory", () => {
   const config = loadConfig(productionEnv({ LOCAL_STORAGE_DIR: "../wardrobe-private" }), root);
   assert.equal(config.storageDriver, "local");
   assert.equal(config.localStorageDir, path.resolve(root, "../wardrobe-private"));
+  assert.deepEqual(config.localStorageFallbackDirs, []);
   assert.equal(config.production, true);
+});
+
+test("production preserves Passenger's previous relative storage root with an application-root fallback", () => {
+  const root = path.resolve("/tmp/wardrobe-account/domains/example.test/nodejs");
+  const launchRoot = path.resolve("/tmp/wardrobe-account/runtime");
+  const config = loadConfig(
+    productionEnv({ LOCAL_STORAGE_DIR: "../wardrobe-private" }),
+    root,
+    { relativeStorageRoot: launchRoot },
+  );
+
+  assert.equal(config.localStorageDir, path.resolve(launchRoot, "../wardrobe-private"));
+  assert.deepEqual(config.localStorageFallbackDirs, [path.resolve(root, "../wardrobe-private")]);
+  assert.equal(config.backupDir, path.resolve(launchRoot, "backups"));
 });
 
 test("production accepts a Hostinger-safe dot-delimited password hash", () => {

@@ -197,6 +197,7 @@ export async function createApp(config, options = {}) {
   });
   app.get("/health", (_req, res) => {
     res.set("X-Wardrobe-Frontend", frontendBuild ? "preloaded" : "development");
+    res.set("X-Wardrobe-Storage", config.localStorageFallbackDirs?.length ? "legacy-compatible" : "primary");
     return res.status(200).json({ status: "ok" });
   });
   app.use(session({

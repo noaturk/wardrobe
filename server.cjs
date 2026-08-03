@@ -8,6 +8,7 @@ const path = require("node:path");
 // anchored to the directory that actually contains this file.
 const launchCwd = process.cwd();
 process.chdir(__dirname);
+globalThis.__wardrobeLaunchCwd = launchCwd;
 
 const startupLogDirectory = path.join(__dirname, "tmp");
 const startupLogPath = path.join(startupLogDirectory, "wardrobe-startup.log");

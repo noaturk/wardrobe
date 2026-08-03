@@ -14,13 +14,15 @@ function startupStage(event, details = {}) {
 // hosts such as Passenger may start Node elsewhere, which previously made the
 // authenticated SPA look for dist/index.html in the wrong directory.
 const applicationRoot = fileURLToPath(new URL("../", import.meta.url));
-startupStage("server-module-loaded", { cwd: process.cwd(), applicationRoot, node: process.version });
-const config = loadConfig(process.env, applicationRoot);
+const launchCwd = globalThis.__wardrobeLaunchCwd || process.cwd();
+startupStage("server-module-loaded", { cwd: process.cwd(), launchCwd, applicationRoot, node: process.version });
+const config = loadConfig(process.env, applicationRoot, { relativeStorageRoot: launchCwd });
 startupStage("configuration-loaded", {
   applicationRoot: config.root,
   production: config.production,
   port: config.port,
   storageDriver: config.storageDriver,
+  storageFallbacks: config.localStorageFallbackDirs.length,
   databaseConfigured: Boolean(config.database),
 });
 startupStage("application-initializing");
@@ -37,7 +39,12 @@ server.listen(config.port, "0.0.0.0", () => {
   console.log(`Private Wardrobe listening on port ${config.port}`);
 });
 
-scheduleBackups(process.env);
+scheduleBackups({
+  ...process.env,
+  WARDROBE_DATA_DIR: config.dataDir,
+  LOCAL_STORAGE_DIR: config.localStorageDir,
+  WARDROBE_BACKUP_DIR: config.backupDir,
+});
 
 let shuttingDown = false;
 function shutdown(signal) {

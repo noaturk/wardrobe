@@ -22,7 +22,7 @@ function requiredProduction(env, names) {
   if (missing.length) throw new Error(`Missing required production environment variables: ${missing.join(", ")}`);
 }
 
-export function loadConfig(env = process.env, root = process.cwd()) {
+export function loadConfig(env = process.env, root = process.cwd(), options = {}) {
   const production = env.NODE_ENV === "production";
   const adminPasswordHash = normalizePasswordHash(env.ADMIN_PASSWORD_HASH);
   const appOrigin = new URL(env.APP_ORIGIN || "http://localhost:3000");
@@ -59,14 +59,23 @@ export function loadConfig(env = process.env, root = process.cwd()) {
 
   const dataDir = path.resolve(root, env.WARDROBE_DATA_DIR || "data");
   const storageDriver = env.STORAGE_DRIVER || "local";
-  const localStorageDir = path.resolve(root, env.LOCAL_STORAGE_DIR || path.join(dataDir, "private"));
+  const localStorageSetting = env.LOCAL_STORAGE_DIR || path.join(dataDir, "private");
+  // Before the production frontend path fix, Hostinger resolved relative private-storage
+  // paths from Passenger's launch directory. Keep that established data location as the
+  // primary root, while retaining the application-relative location as a read fallback.
+  const relativeStorageRoot = path.resolve(options.relativeStorageRoot || root);
+  const localStorageDir = path.resolve(relativeStorageRoot, localStorageSetting);
+  const localStorageFallbackDirs = [...new Set([path.resolve(root, localStorageSetting)])]
+    .filter((candidate) => candidate !== localStorageDir);
+  const backupDir = path.resolve(relativeStorageRoot, env.WARDROBE_BACKUP_DIR || "backups");
   if (!["local", "s3"].includes(storageDriver)) throw new Error("STORAGE_DRIVER must be local or s3");
   if (production && storageDriver === "local") {
     if (!boolean(env.ALLOW_LOCAL_PRODUCTION_STORAGE)) {
       throw new Error("Production local storage requires explicit ALLOW_LOCAL_PRODUCTION_STORAGE=true after persistence is verified");
     }
     requiredProduction(env, ["LOCAL_STORAGE_DIR"]);
-    if (localStorageDir === path.resolve(root) || localStorageDir.startsWith(`${path.resolve(root)}${path.sep}`)) {
+    const deployedRoot = path.resolve(root);
+    if ([localStorageDir, ...localStorageFallbackDirs].some((candidate) => candidate === deployedRoot || candidate.startsWith(`${deployedRoot}${path.sep}`))) {
       throw new Error("Production LOCAL_STORAGE_DIR must be outside the deployed application directory so a redeploy cannot overwrite it");
     }
   }
@@ -116,6 +125,8 @@ export function loadConfig(env = process.env, root = process.cwd()) {
     modelReference: path.resolve(root, env.WARDROBE_MODEL_REFERENCE || path.join(dataDir, "private", "model-reference.png")),
     storageDriver,
     localStorageDir,
+    localStorageFallbackDirs,
+    backupDir,
     s3: {
       endpoint: env.S3_ENDPOINT || undefined,
       region: env.S3_REGION || "",
